@@ -531,6 +531,9 @@ add_executable(buddy-deepseek-r1-f16-run buddy-deepseek-r1-f16-main.cpp)
 add_executable(buddy-deepseek-r1-bf16-run buddy-deepseek-r1-bf16-main.cpp)
 add_executable(buddy-deepseek-r1-cli buddy-deepseek-r1-cli.cpp)
 
+target_sources(buddy-deepseek-r1-run PRIVATE buddy-deepseek-r1-runner.cpp)
+target_sources(buddy-deepseek-r1-cli PRIVATE buddy-deepseek-r1-runner.cpp)
+
 set(DEEPSEEKR1_EXAMPLE_PATH ${CMAKE_CURRENT_SOURCE_DIR})
 set(DEEPSEEKR1_EXAMPLE_BUILD_PATH ${CMAKE_CURRENT_BINARY_DIR})
 
