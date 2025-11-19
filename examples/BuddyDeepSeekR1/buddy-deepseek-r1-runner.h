@@ -50,6 +50,8 @@ using TokenCallback = std::function<void(
     size_t iterationIdx, std::string_view token, double seconds)>;
 using LogCallback = std::function<void(const std::string &message)>;
 
+void tokenizeInput(const std::string &vocabFile,
+                   Text<size_t, 2> &inputContainer, const LogCallback &logHook);
 void loadParameters(const std::string &paramFilePath, MemRef<float, 1> &params,
                     LogCallback logHook = {});
 

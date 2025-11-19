@@ -371,9 +371,18 @@ GenerationResult runGeneration(const std::string &inputStr,
       kv50, kv51, kv52, kv53, kv54, kv55, logitsPrefill);
   MemRefContainer *prefillPtr = &prefillResult;
 
+  /// Fill data into containers
+  //  - Input: register vocabulary and tokenize the input string.
+  //  - Output: register vocabulary.
+  //  - Parameters: load parameters from the `arg0` file into the container.
   tokenizeInput(vocabPath, inputContainerPrefill, logHook);
   outputContainer.loadVocab(vocabPath);
   loadParameters(paramsPath, paramsContainer, logHook);
+
+  /// Run DeepSeekR1 Inference
+  //  - Perform the forward function.
+  //  - Find and append the generated token.
+  //  - Continue iterating until the terminal condition is met.
   if (inputContainerPrefill.getTokenCnt() == 0) {
     tokenStream << std::endl;
     stats.finalText.clear();
@@ -393,14 +402,16 @@ GenerationResult runGeneration(const std::string &inputStr,
   }
 
   std::string streamed;
-  int availableByContext =
-      std::max(0, static_cast<int>(MaxTokenLength) -
-                      static_cast<int>(inputContainerPrefill.getTokenCnt()));
+  int availableByContext = std::max<long long>(
+      0LL, MaxTokenLength - inputContainerPrefill.getTokenCnt());
+  // Guard rail: stop here if the KV cache or user budget cannot fit new tokens.
   if (shouldStopAfterPrefill(availableByContext, maxNewTokens, prefillSeconds,
                              streamed, stats, tokenStream)) {
     return stats;
   }
 
+  // Track the effective generation quota that accounts for both context limits
+  // and user-provided max token budget.
   int remainingBudget = std::min(maxNewTokens, availableByContext);
 
   MemRef<float, 3> logitsDecode({1, 1, MaxVocabSize});
@@ -412,8 +423,7 @@ GenerationResult runGeneration(const std::string &inputStr,
       kv50, kv51, kv52, kv53, kv54, kv55, logitsDecode);
   MemRefContainer *decodePtr = &decodeResult;
 
-  const int tokenIndex =
-      static_cast<int>(inputContainerPrefill.getTokenCnt()) - 1;
+  const int tokenIndex = inputContainerPrefill.getTokenCnt() - 1;
   const float *startPtr =
       prefillPtr->logits.getData() + tokenIndex * MaxVocabSize;
   const float *endPtr = startPtr + MaxVocabSize;
@@ -449,16 +459,14 @@ GenerationResult runGeneration(const std::string &inputStr,
     return stats;
   }
 
-  const int decodeBudget = remainingBudget;
-  const auto maxDecodeSteps = std::min(
-      decodeBudget,
-      std::max(0, static_cast<int>(MaxTokenLength) -
-                      static_cast<int>(inputContainerPrefill.getTokenCnt())));
+  // Limit decode iterations to the remaining quota after handling the first
+  // token emitted from the prefill logits.
+  const int generateLen = remainingBudget;
 
   double decodeTimeAccumMs = 0.0;
   size_t decodeTokens = 0;
 
-  for (int i = 0; i < maxDecodeSteps; ++i) {
+  for (int i = 0; i < generateLen; ++i) {
     const auto decodeStart = high_resolution_clock::now();
     _mlir_ciface_forward_decode(
         decodePtr, &paramsContainer, &inputContainerDecode, &cachePosition,
