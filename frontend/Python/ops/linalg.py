@@ -1536,16 +1536,16 @@ def _index_op_all_tensors(
     # Create the linalg.generic op
     op = linalg.GenericOp(
         [tensor_type],
-        operands,
+        index_tensor_operands,  # Only non-None operands
         [output],
         ir.ArrayAttr.get(input_map),
         iterator_attr,
     )
 
     # Build the region body
-    arguments = [ir.RankedTensorType(i.type).element_type for i in operands] + [
-        ir.RankedTensorType(output.result.type).element_type
-    ]
+    arguments = [
+        ir.RankedTensorType(i.type).element_type for i in index_tensor_operands
+    ] + [ir.RankedTensorType(output.result.type).element_type]
     block = ir.Block.create_at_start(op.region, arguments)
 
     # Convert block arguments (index tensor values) into index values
@@ -1554,7 +1554,7 @@ def _index_op_all_tensors(
     for i in block.arguments[:-1]:
         indexcast_op = arith.IndexCastOp(ir.IndexType.get(), i)
         block.append(indexcast_op)
-        index.append(indexcast_op.result)
+        index_tensor_values.append(indexcast_op.result)
 
     # If we have fewer index tensors than input dimensions, we need to add
     # linalg.index ops for the remaining dimensions
