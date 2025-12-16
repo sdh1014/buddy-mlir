@@ -943,6 +943,30 @@ class AsStridedOp(Op):
         self._op_type = OpType.ElementwiseType
 
 
+class AsStridedCopyOp(Op):
+    """
+    As strided copy operation.
+    Implements aten.as_strided_copy: Creates a copy with specified size, stride, and offset.
+    Unlike as_strided, this returns a copy rather than a view.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._op_type = OpType.ReshapeType
+
+
+class AsStridedScatterOp(Op):
+    """
+    As strided scatter operation.
+    Implements aten.as_strided_scatter: Embeds src values into self at strided positions.
+    This is the inverse operation of as_strided.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._op_type = OpType.ReshapeType
+
+
 class ScatterSrcOp(Op):
     """
     Scatter operation with source tensor.
@@ -1322,6 +1346,127 @@ class ErfcOp(Op):
     def __init__(self) -> None:
         super().__init__()
         self._op_type = OpType.ElementwiseType
+
+
+class ErfcxOp(Op):
+    """
+    Scaled complementary error function.
+    Implements aten.special_erfcx: exp(x^2) * erfc(x).
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._op_type = OpType.ElementwiseType
+
+
+class ErfinvOp(Op):
+    """
+    Inverse error function.
+    Implements aten.erfinv: erfinv(erf(x)) = x.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._op_type = OpType.ElementwiseType
+
+
+class GluOp(Op):
+    """
+    Gated Linear Unit.
+    Implements aten.glu: GLU(x) = x[:, :n/2] * sigmoid(x[:, n/2:]).
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._op_type = OpType.ElementwiseType
+
+
+class DiagonalScatterOp(Op):
+    """
+    Diagonal scatter operation.
+    Implements aten.diagonal_scatter: embeds values into diagonal of a tensor.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._op_type = OpType.ReshapeType
+
+
+class LogcumsumexpOp(Op):
+    """
+    Log-cumulative-sum-exp operation.
+    Implements aten.logcumsumexp: log(cumsum(exp(x))).
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._op_type = OpType.ReduceType
+
+
+class FrexpOp(Op):
+    """
+    Frexp operation - extract mantissa and exponent.
+    Implements aten.frexp: returns (mantissa, exponent) where x = mantissa * 2^exponent.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._op_type = OpType.ElementwiseType
+
+
+class IgammaOp(Op):
+    """
+    Regularized lower incomplete gamma function.
+    Implements aten.igamma: P(a, x) = gamma(a, x) / Gamma(a).
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._op_type = OpType.ElementwiseType
+
+
+class IgammacOp(Op):
+    """
+    Regularized upper incomplete gamma function.
+    Implements aten.igammac: Q(a, x) = 1 - P(a, x).
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._op_type = OpType.ElementwiseType
+
+
+class MedianDimOp(Op):
+    """
+    Median along a dimension.
+    Implements aten.median.dim: returns (values, indices) of median along dim.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._op_type = OpType.ReduceType
+
+
+class ModeOp(Op):
+    """
+    Mode operation.
+    Implements aten.mode: returns (values, indices) of most frequent element along dim.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._op_type = OpType.ReduceType
+
+
+class KthvalueOp(Op):
+    """
+    K-th smallest value operation.
+    Implements aten.kthvalue: returns (values, indices) of k-th smallest element along dim.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._op_type = OpType.ReduceType
 
 
 class CummaxOp(Op):
@@ -1995,6 +2140,18 @@ class RandnOp(Op):
         self._op_type = OpType.ReshapeType
 
 
+class UniformOp(Op):
+    """
+    Uniform distribution fill operation.
+    Implements aten.uniform.default / aten.uniform_.default:
+    Fills the input tensor with values sampled from a uniform distribution.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._op_type = OpType.ElementwiseType
+
+
 class SelectScatterOp(Op):
     """
     Select scatter operation.
@@ -2382,6 +2539,14 @@ class ReplicationPad3dOp(Op):
 
 class EmptyStridedOp(Op):
     """Create empty tensor with specified strides"""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._op_type = OpType.PlaceholderType
+
+
+class NewEmptyStridedOp(Op):
+    """Create empty tensor with specified strides (like `Tensor.new_empty_strided`)."""
 
     def __init__(self) -> None:
         super().__init__()
