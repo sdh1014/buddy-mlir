@@ -382,7 +382,7 @@ def _template_isin_scalar_tensor():
 
 def _template_isin_scalar_tensor_out():
     args, _ = _template_isin_scalar_tensor()
-    out = torch.empty_like(args[1], dtype=torch.bool)
+    out = torch.empty((), dtype=torch.bool)
     return args, {"out": out}
 
 
@@ -700,21 +700,21 @@ CUSTOM_TEMPLATES.update(
         "gcd.out": _template_gcd_out,
         "gcd.int": _template_gcd_int,
         "gcd_.default": _template_gcd_inplace,
-        "geometric.default": _template_geometric,
-        "geometric.out": _template_geometric_out,
-        "geometric_.default": _template_geometric,
+        "geometric.default": _skip("random_op_not_supported"),
+        "geometric.out": _skip("random_op_not_supported"),
+        "geometric_.default": _skip("random_op_not_supported"),
         "glu.default": _template_glu,
         "glu.out": _template_glu_out,
         "glu_backward.default": _template_glu_backward,
         "glu_backward.grad_input": _template_glu_backward_out,
         "grid_sampler_2d.default": _template_grid_sampler_2d,
         "grid_sampler_2d.out": _template_grid_sampler_2d_out,
-        "grid_sampler_2d_backward.default": _template_grid_sampler_2d_backward,
-        "grid_sampler_2d_backward.out": _template_grid_sampler_2d_backward_out,
+        "grid_sampler_2d_backward.default": _skip("backward_not_supported"),
+        "grid_sampler_2d_backward.out": _skip("backward_not_supported"),
         "grid_sampler_3d.default": _template_grid_sampler_3d,
         "grid_sampler_3d.out": _template_grid_sampler_3d_out,
-        "grid_sampler_3d_backward.default": _template_grid_sampler_3d_backward,
-        "grid_sampler_3d_backward.out": _template_grid_sampler_3d_backward_out,
+        "grid_sampler_3d_backward.default": _skip("backward_not_supported"),
+        "grid_sampler_3d_backward.out": _skip("backward_not_supported"),
         "gru.input": _template_gru_input,
         "gru.data": _template_gru_data,
         "isfinite.default": lambda: _template_is_finite("default"),
@@ -776,7 +776,7 @@ CUSTOM_TEMPLATES.update(
         "gt_.Tensor": _template_cmp_tensor_tensor,
         "im2col.default": _template_im2col,
         "im2col.out": _template_im2col_out,
-        "imag.default": _template_imag,
+        "imag.default": _skip("complex_dtype_not_supported"),
         "hardtanh_backward.default": _template_hardtanh_backward,
         "hardtanh_backward.grad_input": _template_hardtanh_backward_out,
         "index.Tensor": _template_index_tensor,
@@ -821,13 +821,15 @@ CUSTOM_TEMPLATES.update(
         "is_coalesced.default": _template_is_coalesced,
         "index.str": _template_index_str,
         "index.list_str": _template_index_list_str,
-        "istft.default": _template_istft,
+        "istft.default": _skip("complex_fft_not_supported"),
         "isin.Tensor_Tensor": _template_isin_tensor_tensor,
         "isin.Tensor_Tensor_out": _template_isin_tensor_tensor_out,
         "isin.Tensor_Scalar": _template_isin_tensor_scalar,
         "isin.Tensor_Scalar_out": _template_isin_tensor_scalar_out,
         "isin.Scalar_Tensor": _template_isin_scalar_tensor,
         "isin.Scalar_Tensor_out": _template_isin_scalar_tensor_out,
+        # Skip inplace heaviside due to PyTorch/Dynamo functionalization limitation
+        "heaviside_.default": _skip("dynamo_inplace_shape_mismatch"),
     }
 )
 

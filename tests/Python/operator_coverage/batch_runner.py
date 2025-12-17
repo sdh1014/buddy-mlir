@@ -89,6 +89,17 @@ def load_coverage_map(
     path: Path | str = DEFAULT_COVERAGE_JSON,
 ) -> Dict[str, Dict[str, Any]]:
     path = Path(path)
+    if not path.is_absolute():
+        repo_root = THIS_DIR.parents[2]
+        candidates = [
+            Path.cwd() / path,
+            THIS_DIR / path,
+            repo_root / path,
+        ]
+        for cand in candidates:
+            if cand.exists():
+                path = cand.resolve()
+                break
     with path.open("r", encoding="utf-8") as f:
         entries = json.load(f)
     return {f"{e['op']}.{e['overload']}": e for e in entries}
@@ -207,9 +218,11 @@ def _find_first_tensor(obj: Any) -> torch.Tensor | None:
 def _make_out_like(
     ref: torch.Tensor | None, dtype: torch.dtype | None = None
 ) -> torch.Tensor:
+    # Use 0-element out buffers to avoid PyTorch deprecation warnings and
+    # future errors around resizing non-empty outputs.
     if ref is not None:
-        return torch.empty_like(ref, dtype=dtype or ref.dtype)
-    return torch.zeros(1, dtype=dtype or torch.float32)
+        return torch.empty(0, dtype=dtype or ref.dtype, device=ref.device)
+    return torch.empty(0, dtype=dtype or torch.float32)
 
 
 def build_inputs(
@@ -525,7 +538,18 @@ def run_batch(
 
     results: List[Result] = []
     for name, entry in entries:
-        results.append(run_one(name, entry, dynamo_compiler, templates))
+        result = run_one(name, entry, dynamo_compiler, templates)
+        results.append(result)
+        # Reset Dynamo after EVERY operation to prevent state pollution.
+        # Even successful compilations can leave cached state that interferes
+        # with subsequent operations (e.g., le.Tensor success pollutes le.Scalar).
+        # This is necessary because Dynamo's internal caching doesn't properly
+        # isolate different op patterns with similar function structures.
+        torch._dynamo.reset()
+        dynamo_compiler = DynamoCompiler(
+            primary_registry=tosa.ops_registry,
+            aot_autograd_decomposition=make_aot_decompositions(),
+        )
 
     ok = sum(1 for r in results if r.status == "ok")
     fail = sum(1 for r in results if r.status == "fail")

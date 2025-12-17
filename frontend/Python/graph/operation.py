@@ -300,6 +300,12 @@ class DivOp(Op):
         self._op_type = OpType.BroadcastType
 
 
+class PrimsDivOp(Op):
+    def __init__(self) -> None:
+        super().__init__()
+        self._op_type = OpType.BroadcastType
+
+
 class DivTensorModeOp(Op):
     """
     Division operation with rounding mode.
@@ -464,6 +470,19 @@ class MaxPool2dWithIndicesOp(Op):
         self._layout = "NCHW"
 
 
+class FractionalMaxPool2dOp(Op):
+    """
+    Fractional max pool 2D operation.
+    Implements aten.fractional_max_pool2d: Fractional max pooling with indices.
+    Returns (output, indices).
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._op_type = OpType.ReduceType
+        self._layout = "NCHW"
+
+
 class MaxPool2dOp(Op):
     def __init__(self) -> None:
         super().__init__()
@@ -490,6 +509,51 @@ class AvgPool3dOp(Op):
         super().__init__()
         self._op_type = OpType.ReduceType
         self._layout = "NCDHW"
+
+
+class HistcOp(Op):
+    """
+    Histogram count operation.
+    Implements aten.histc: Computes histogram of a tensor.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._op_type = OpType.ReduceType
+
+
+class GcdOp(Op):
+    """
+    Greatest common divisor operation.
+    Implements aten.gcd: Computes element-wise greatest common divisor.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._op_type = OpType.ElementwiseType
+
+
+class IndexReduceOp(Op):
+    """
+    Index reduce operation.
+    Implements aten.index_reduce: Reduces source into self at indices along dim.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._op_type = OpType.ReduceType
+
+
+class IsinScalarTensorOp(Op):
+    """
+    Membership test for scalar vs tensor.
+    Implements aten.isin.Scalar_Tensor: checks if scalar is in test_elements.
+    Returns a 0-d bool tensor.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._op_type = OpType.ReduceType
 
 
 class AdaptiveMaxPool1dOp(Op):
@@ -1194,6 +1258,18 @@ class GridSampler2dOp(Op):
         self._op_type = OpType.ReshapeType
 
 
+class GridSampler3dOp(Op):
+    """
+    Grid sampler 3D operation.
+    Implements aten.grid_sampler_3d: Sample from input using 3D grid coordinates.
+    Args: input, grid, interpolation_mode, padding_mode, align_corners
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._op_type = OpType.ReshapeType
+
+
 class Col2imOp(Op):
     """
     Col2im operation (column to image).
@@ -1528,6 +1604,17 @@ class CopysignOp(Op):
     """
     Copy sign operation.
     Implements aten.copysign: Returns x with the sign of y.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._op_type = OpType.ElementwiseType
+
+
+class CopysignScalarOp(Op):
+    """
+    Copy sign operation with scalar.
+    Implements aten.copysign.Scalar: Returns tensor with the sign of scalar.
     """
 
     def __init__(self) -> None:
@@ -2335,35 +2422,6 @@ class AvgPool2dBackwardOp(Op):
         self._layout = "NCHW"
 
 
-class ConvolutionBackwardOp(Op):
-    """
-    Backward pass for convolution.
-    Implements aten.convolution_backward:
-    Computes gradients for input, weight, and bias.
-
-    Args:
-        grad_output: Gradient from upstream
-        input: Original input tensor
-        weight: Convolution weight
-        bias_sizes: Size of bias tensor (optional)
-        stride: Convolution stride
-        padding: Convolution padding
-        dilation: Convolution dilation
-        transposed: Whether transposed convolution
-        output_padding: Output padding for transposed conv
-        groups: Number of groups
-        output_mask: [3] bool mask for which gradients to compute
-
-    Returns:
-        (grad_input, grad_weight, grad_bias): Tuple of gradients
-    """
-
-    def __init__(self) -> None:
-        super().__init__()
-        self._op_type = OpType.Unfusable
-        self._layout = "NCHW"
-
-
 class EmbeddingDenseBackwardOp(Op):
     """
     Backward pass for embedding.
@@ -2485,6 +2543,78 @@ class BitwiseOrScalarOp(Op):
 
 class BitwiseXorScalarOp(Op):
     """Bitwise XOR with scalar: tensor ^ scalar"""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._op_type = OpType.ElementwiseType
+
+
+class BitwiseAndScalarTensorOp(Op):
+    """Bitwise AND with scalar first: scalar & tensor"""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._op_type = OpType.ElementwiseType
+
+
+class BitwiseOrScalarTensorOp(Op):
+    """Bitwise OR with scalar first: scalar | tensor"""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._op_type = OpType.ElementwiseType
+
+
+class BitwiseXorScalarTensorOp(Op):
+    """Bitwise XOR with scalar first: scalar ^ tensor"""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._op_type = OpType.ElementwiseType
+
+
+class BitwiseLeftShiftTensorOp(Op):
+    """Bitwise left shift between two tensors: tensor << tensor"""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._op_type = OpType.BroadcastType
+
+
+class BitwiseLeftShiftTensorScalarOp(Op):
+    """Bitwise left shift tensor by scalar: tensor << scalar"""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._op_type = OpType.ElementwiseType
+
+
+class BitwiseLeftShiftScalarTensorOp(Op):
+    """Bitwise left shift scalar by tensor: scalar << tensor"""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._op_type = OpType.ElementwiseType
+
+
+class BitwiseRightShiftTensorOp(Op):
+    """Bitwise right shift between two tensors: tensor >> tensor"""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._op_type = OpType.BroadcastType
+
+
+class BitwiseRightShiftTensorScalarOp(Op):
+    """Bitwise right shift tensor by scalar: tensor >> scalar"""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._op_type = OpType.ElementwiseType
+
+
+class BitwiseRightShiftScalarTensorOp(Op):
+    """Bitwise right shift scalar by tensor: scalar >> tensor"""
 
     def __init__(self) -> None:
         super().__init__()

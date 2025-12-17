@@ -176,6 +176,7 @@ from ..graph import (
     ClampMaxTensorOp,
     HypotOp,
     CopysignOp,
+    CopysignScalarOp,
     SignOp,
     NextafterOp,
     MaskedScatterOp,
@@ -192,13 +193,23 @@ from ..graph import (
     # Backward Operations
     AdaptiveAvgPool2dBackwardOp,
     AvgPool2dBackwardOp,
-    ConvolutionBackwardOp,
     NativeGroupNormBackwardOp,
     NativeLayerNormBackwardOp,
     # Bitwise Scalar Operations
     BitwiseAndScalarOp,
     BitwiseOrScalarOp,
     BitwiseXorScalarOp,
+    # Bitwise Scalar_Tensor Operations (scalar is first argument)
+    BitwiseAndScalarTensorOp,
+    BitwiseOrScalarTensorOp,
+    BitwiseXorScalarTensorOp,
+    # Bitwise Shift Operations
+    BitwiseLeftShiftTensorOp,
+    BitwiseLeftShiftTensorScalarOp,
+    BitwiseLeftShiftScalarTensorOp,
+    BitwiseRightShiftTensorOp,
+    BitwiseRightShiftTensorScalarOp,
+    BitwiseRightShiftScalarTensorOp,
     # Padding Operations
     ReflectionPad1dOp,
     ReflectionPad2dOp,
@@ -217,6 +228,7 @@ from ..graph import (
     LocalScalarDenseOp,
     ResizeOp,
     SplitWithSizesOp,
+    EmptyOp,
 )
 from .utils import *
 
@@ -3343,6 +3355,19 @@ def zeros_op(node: ZerosOp, symbol_table):
     return tosa.ConstOp(zero_attr)
 
 
+def empty_op(node: EmptyOp, symbol_table):
+    """
+    Import the empty operation.
+    From buddy graph ir's `EmptyOp` operator to MLIR tensor.empty operation.
+    Creates an uninitialized tensor with the specified shape.
+    """
+    output_shape = list(node.tensor_meta["shape"])
+    dtype = node.tensor_meta["dtype"]
+    result_element_type = mlir_element_type_get(dtype)
+
+    return tensor.EmptyOp(output_shape, result_element_type)
+
+
 def zeros_like_op(node: ZerosLikeOp, symbol_table):
     """
     Import the zeros_like operation.
@@ -4691,7 +4716,6 @@ def div_scalar_op(node: DivScalarOp, symbol_table):
         ir.RankedTensorType.get(input_shape, input_dtype),
         input1,
         scalar_tensor,
-        0,  # shift
     ).result
 
 
@@ -7750,6 +7774,42 @@ def copysign_op(node: CopysignOp, symbol_table):
     return result
 
 
+def copysign_scalar_op(node: CopysignScalarOp, symbol_table):
+    """
+    Import the copysign operation with scalar.
+    From buddy graph ir's `CopysignScalarOp` operator to MLIR operations.
+    aten.copysign.Scalar(input, other) -> Tensor
+
+    Returns input with the sign of scalar other.
+    """
+    input_tensor = symbol_table.get((str(node.args[0]), 0))
+    scalar_value = node.args[1]
+
+    input_shape = list(ir.RankedTensorType(input_tensor.type).shape)
+    input_dtype = ir.RankedTensorType(input_tensor.type).element_type
+    result_type = ir.RankedTensorType.get(input_shape, input_dtype)
+
+    # copysign(x, y) = abs(x) * sign(y)
+    abs_input = tosa.AbsOp(result_type, input_tensor).result
+
+    # Determine sign of the scalar at compile time
+    if scalar_value >= 0:
+        sign_value = 1.0
+    else:
+        sign_value = -1.0
+
+    # Create a tensor filled with the sign value
+    sign_tensor = tosa.ConstOp(
+        ir.DenseElementsAttr.get_splat(
+            result_type, ir.FloatAttr.get(input_dtype, sign_value)
+        )
+    ).result
+
+    result = tosa.MulOp(result_type, abs_input, sign_tensor).result
+
+    return result
+
+
 def sign_op(node: SignOp, symbol_table):
     """
     Import the sign operation.
@@ -8186,194 +8246,6 @@ def avg_pool2d_backward_op(node: AvgPool2dBackwardOp, symbol_table):
     return tosa.TransposeOp(result_type, result, perm_const2.results[0])
 
 
-def convolution_backward_op(node: ConvolutionBackwardOp, symbol_table):
-    """
-    Import the convolution_backward operation.
-    From buddy graph ir's `ConvolutionBackwardOp` operator to MLIR operations.
-    aten.convolution_backward(grad_output, input, weight, bias_sizes, stride,
-                              padding, dilation, transposed, output_padding,
-                              groups, output_mask) -> (Tensor, Tensor, Tensor)
-
-    Computes gradients for input, weight, and bias.
-    - grad_input: transposed convolution of grad_output with weight
-    - grad_weight: convolution of input with grad_output
-    - grad_bias: sum of grad_output over batch and spatial dimensions
-    """
-    grad_output = symbol_table.get((str(node.args[0]), 0))
-    input_tensor = symbol_table.get((str(node.args[1]), 0))
-    weight = symbol_table.get((str(node.args[2]), 0))
-    bias_sizes = node.args[3]  # Can be None
-    stride = node.args[4]
-    padding = node.args[5]
-    dilation = node.args[6]
-    transposed = node.args[7]
-    output_padding = node.args[8]
-    groups = node.args[9]
-    output_mask = node.args[
-        10
-    ]  # [bool, bool, bool] for grad_input, grad_weight, grad_bias
-
-    grad_shape = list(ir.RankedTensorType(grad_output.type).shape)
-    input_shape = list(ir.RankedTensorType(input_tensor.type).shape)
-    weight_shape = list(ir.RankedTensorType(weight.type).shape)
-    input_dtype = ir.RankedTensorType(input_tensor.type).element_type
-
-    N, C_out, out_h, out_w = grad_shape
-    _, C_in, H, W = input_shape
-    K_out, K_in, kH, kW = weight_shape
-
-    if isinstance(stride, int):
-        stride_h, stride_w = stride, stride
-    else:
-        stride_h, stride_w = stride[0], (
-            stride[1] if len(stride) > 1 else stride[0]
-        )
-
-    if isinstance(padding, int):
-        pad_h, pad_w = padding, padding
-    else:
-        pad_h, pad_w = padding[0], (
-            padding[1] if len(padding) > 1 else padding[0]
-        )
-
-    if isinstance(dilation, int):
-        dil_h, dil_w = dilation, dilation
-    else:
-        dil_h, dil_w = dilation[0], (
-            dilation[1] if len(dilation) > 1 else dilation[0]
-        )
-
-    results = []
-
-    # Compute grad_input using transposed convolution
-    if output_mask[0]:
-        # grad_input = conv_transpose(grad_output, weight)
-        # Convert to NHWC format for TOSA
-        perm_nchw_to_nhwc = [0, 2, 3, 1]
-        perm_const = tosa.ConstOp(
-            ir.DenseElementsAttr.get(
-                memoryview(array.array("i", perm_nchw_to_nhwc))
-            )
-        )
-
-        # Transpose grad_output to NHWC
-        nhwc_grad_shape = [N, out_h, out_w, C_out]
-        nhwc_grad_type = ir.RankedTensorType.get(nhwc_grad_shape, input_dtype)
-        grad_nhwc = tosa.TransposeOp(
-            nhwc_grad_type, grad_output, perm_const.results[0]
-        )
-
-        # Transpose weight from OIHW to HWIO (flip for transposed conv)
-        perm_weight = [2, 3, 1, 0]  # OIHW -> HWIO
-        perm_weight_const = tosa.ConstOp(
-            ir.DenseElementsAttr.get(memoryview(array.array("i", perm_weight)))
-        )
-        hwio_weight_shape = [kH, kW, K_in, K_out]
-        hwio_weight_type = ir.RankedTensorType.get(
-            hwio_weight_shape, input_dtype
-        )
-        weight_hwio = tosa.TransposeOp(
-            hwio_weight_type, weight, perm_weight_const.results[0]
-        )
-
-        # Use transpose_conv2d for gradient w.r.t. input
-        out_pad = [pad_h, pad_h, pad_w, pad_w]
-        output_nhwc_shape = [N, H, W, C_in]
-        output_nhwc_type = ir.RankedTensorType.get(
-            output_nhwc_shape, input_dtype
-        )
-
-        # Create zero bias
-        zero_bias_attr = ir.DenseElementsAttr.get(
-            memoryview(array.array("f", [0.0] * C_in)),
-            type=ir.RankedTensorType.get([C_in], input_dtype),
-        )
-        zero_bias = tosa.ConstOp(zero_bias_attr).result
-
-        out_pad_attr = ir._denseI64ArrayAttr(out_pad, None)
-        stride_attr = ir._denseI64ArrayAttr([stride_h, stride_w], None)
-        out_shape_attr = ir._denseI64ArrayAttr(output_nhwc_shape, None)
-
-        grad_input_nhwc = tosa.TransposeConv2DOp(
-            output_nhwc_type,
-            grad_nhwc.result,
-            weight_hwio.result,
-            zero_bias,
-            out_pad_attr,
-            stride_attr,
-            out_shape_attr,
-        ).result
-
-        # Convert back to NCHW
-        perm_nhwc_to_nchw = [0, 3, 1, 2]
-        perm_const2 = tosa.ConstOp(
-            ir.DenseElementsAttr.get(
-                memoryview(array.array("i", perm_nhwc_to_nchw))
-            )
-        )
-        grad_input_type = ir.RankedTensorType.get(input_shape, input_dtype)
-        grad_input = tosa.TransposeOp(
-            grad_input_type, grad_input_nhwc, perm_const2.results[0]
-        )
-        results.append(grad_input.result)
-    else:
-        # Return None/zeros for grad_input
-        zeros_attr = ir.DenseElementsAttr.get(
-            memoryview(array.array("f", [0.0])),
-            type=ir.RankedTensorType.get([1], input_dtype),
-        )
-        results.append(tosa.ConstOp(zeros_attr).result)
-
-    # Compute grad_weight
-    if output_mask[1]:
-        # grad_weight = conv(input, grad_output) summed over batch
-        # This is complex in pure TOSA, use a simplified approach
-
-        # Create zeros for grad_weight as placeholder
-        # In practice, this would need linalg.generic or custom implementation
-        grad_weight_shape = weight_shape
-        zeros_attr = ir.DenseElementsAttr.get(
-            memoryview(array.array("f", [0.0] * (K_out * K_in * kH * kW))),
-            type=ir.RankedTensorType.get(grad_weight_shape, input_dtype),
-        )
-        grad_weight = tosa.ConstOp(zeros_attr).result
-        results.append(grad_weight)
-    else:
-        zeros_attr = ir.DenseElementsAttr.get(
-            memoryview(array.array("f", [0.0])),
-            type=ir.RankedTensorType.get([1], input_dtype),
-        )
-        results.append(tosa.ConstOp(zeros_attr).result)
-
-    # Compute grad_bias
-    if output_mask[2] and bias_sizes is not None:
-        # grad_bias = sum(grad_output, dim=[0, 2, 3])
-        # Sum over batch dimension first
-        axis_0 = ir.IntegerAttr.get(ir.IntegerType.get_signless(32), 0)
-        sum_over_batch = tosa.ReduceSumOp(grad_output, axis_0).results[0]
-
-        # Sum over spatial dimensions
-        axis_2 = ir.IntegerAttr.get(ir.IntegerType.get_signless(32), 2)
-        sum_over_h = tosa.ReduceSumOp(sum_over_batch, axis_2).results[0]
-
-        axis_2_again = ir.IntegerAttr.get(ir.IntegerType.get_signless(32), 2)
-        sum_over_w = tosa.ReduceSumOp(sum_over_h, axis_2_again).results[0]
-
-        # Reshape to (C_out,)
-        grad_bias = tosa.ReshapeOp(
-            sum_over_w, memoryview(array.array("i", [C_out]))
-        ).result
-        results.append(grad_bias)
-    else:
-        zeros_attr = ir.DenseElementsAttr.get(
-            memoryview(array.array("f", [0.0])),
-            type=ir.RankedTensorType.get([1], input_dtype),
-        )
-        results.append(tosa.ConstOp(zeros_attr).result)
-
-    return tuple(results)
-
-
 def native_group_norm_backward_op(
     node: NativeGroupNormBackwardOp, symbol_table
 ):
@@ -8805,6 +8677,269 @@ def bitwise_xor_scalar_op(node: BitwiseXorScalarOp, symbol_table):
 
     # Perform bitwise XOR
     return arith.XOrIOp(input_tensor, scalar_tensor)
+
+
+def bitwise_and_scalar_tensor_op(node: BitwiseAndScalarTensorOp, symbol_table):
+    """
+    Perform element-wise bitwise AND between a scalar and a tensor.
+
+    Args:
+        node: Operation node with scalar value and tensor input
+        symbol_table: Symbol table mapping node names to values
+    """
+    scalar_value = node.args[0]
+    input_tensor = symbol_table.get((str(node.args[1]), 0), node.args[1])
+
+    output_shape = list(node.tensor_meta["shape"])
+    input_dtype = ir.RankedTensorType(input_tensor.type).element_type
+
+    # Create scalar tensor
+    scalar_attr = ir.IntegerAttr.get(input_dtype, int(scalar_value))
+    scalar_tensor_type = ir.RankedTensorType.get(output_shape, input_dtype)
+    scalar_tensor_attr = ir.DenseElementsAttr.get_splat(
+        scalar_tensor_type, scalar_attr
+    )
+    scalar_tensor = tosa.ConstOp(scalar_tensor_attr).results[0]
+
+    # Perform bitwise AND
+    return arith.AndIOp(scalar_tensor, input_tensor)
+
+
+def bitwise_or_scalar_tensor_op(node: BitwiseOrScalarTensorOp, symbol_table):
+    """
+    Perform element-wise bitwise OR between a scalar and a tensor.
+
+    Args:
+        node: Operation node with scalar value and tensor input
+        symbol_table: Symbol table mapping node names to values
+    """
+    scalar_value = node.args[0]
+    input_tensor = symbol_table.get((str(node.args[1]), 0), node.args[1])
+
+    output_shape = list(node.tensor_meta["shape"])
+    input_dtype = ir.RankedTensorType(input_tensor.type).element_type
+
+    # Create scalar tensor
+    scalar_attr = ir.IntegerAttr.get(input_dtype, int(scalar_value))
+    scalar_tensor_type = ir.RankedTensorType.get(output_shape, input_dtype)
+    scalar_tensor_attr = ir.DenseElementsAttr.get_splat(
+        scalar_tensor_type, scalar_attr
+    )
+    scalar_tensor = tosa.ConstOp(scalar_tensor_attr).results[0]
+
+    # Perform bitwise OR
+    return arith.OrIOp(scalar_tensor, input_tensor)
+
+
+def bitwise_xor_scalar_tensor_op(node: BitwiseXorScalarTensorOp, symbol_table):
+    """
+    Perform element-wise bitwise XOR between a scalar and a tensor.
+
+    Args:
+        node: Operation node with scalar value and tensor input
+        symbol_table: Symbol table mapping node names to values
+    """
+    scalar_value = node.args[0]
+    input_tensor = symbol_table.get((str(node.args[1]), 0), node.args[1])
+
+    output_shape = list(node.tensor_meta["shape"])
+    input_dtype = ir.RankedTensorType(input_tensor.type).element_type
+
+    # Create scalar tensor
+    scalar_attr = ir.IntegerAttr.get(input_dtype, int(scalar_value))
+    scalar_tensor_type = ir.RankedTensorType.get(output_shape, input_dtype)
+    scalar_tensor_attr = ir.DenseElementsAttr.get_splat(
+        scalar_tensor_type, scalar_attr
+    )
+    scalar_tensor = tosa.ConstOp(scalar_tensor_attr).results[0]
+
+    # Perform bitwise XOR
+    return arith.XOrIOp(scalar_tensor, input_tensor)
+
+
+def bitwise_left_shift_tensor_op(node: BitwiseLeftShiftTensorOp, symbol_table):
+    """
+    Perform element-wise bitwise left shift between two tensors.
+
+    Args:
+        node: Operation node with two tensor inputs
+        symbol_table: Symbol table mapping node names to values
+    """
+    input1 = symbol_table.get((str(node.args[0]), 0), node.args[0])
+    input2 = symbol_table.get((str(node.args[1]), 0), node.args[1])
+
+    output_shape = list(node.tensor_meta["shape"])
+    input_dtype = ir.RankedTensorType(input1.type).element_type
+
+    # Helper: broadcast a tensor to the target shape using addition
+    def broadcast_tensor(tensor, target_shape):
+        if list(tensor.type.shape) == target_shape:
+            return tensor
+
+        # Create a zero tensor of the target shape
+        element = ir.IntegerAttr.get(input_dtype, 0)
+        new_tensor_type = ir.RankedTensorType.get(target_shape, input_dtype)
+        new_tensor_attr = ir.DenseElementsAttr.get_splat(
+            new_tensor_type, element
+        )
+        zero_tensor = tosa.ConstOp(new_tensor_attr).results[0]
+
+        # Broadcast tensor to target shape using addition
+        return _gen_arith_binary_op(tensor, zero_tensor, tosa.AddOp).results[0]
+
+    input1 = broadcast_tensor(input1, output_shape)
+    input2 = broadcast_tensor(input2, output_shape)
+
+    return arith.ShLIOp(input1, input2)
+
+
+def bitwise_left_shift_tensor_scalar_op(
+    node: BitwiseLeftShiftTensorScalarOp, symbol_table
+):
+    """
+    Perform element-wise bitwise left shift of tensor by scalar.
+
+    Args:
+        node: Operation node with tensor input and scalar shift amount
+        symbol_table: Symbol table mapping node names to values
+    """
+    input_tensor = symbol_table.get((str(node.args[0]), 0), node.args[0])
+    shift_amount = node.args[1]
+
+    output_shape = list(node.tensor_meta["shape"])
+    input_dtype = ir.RankedTensorType(input_tensor.type).element_type
+
+    # Create scalar tensor for shift amount
+    scalar_attr = ir.IntegerAttr.get(input_dtype, int(shift_amount))
+    scalar_tensor_type = ir.RankedTensorType.get(output_shape, input_dtype)
+    scalar_tensor_attr = ir.DenseElementsAttr.get_splat(
+        scalar_tensor_type, scalar_attr
+    )
+    scalar_tensor = tosa.ConstOp(scalar_tensor_attr).results[0]
+
+    return arith.ShLIOp(input_tensor, scalar_tensor)
+
+
+def bitwise_left_shift_scalar_tensor_op(
+    node: BitwiseLeftShiftScalarTensorOp, symbol_table
+):
+    """
+    Perform element-wise bitwise left shift of scalar by tensor.
+
+    Args:
+        node: Operation node with scalar value and tensor shift amount
+        symbol_table: Symbol table mapping node names to values
+    """
+    scalar_value = node.args[0]
+    shift_tensor = symbol_table.get((str(node.args[1]), 0), node.args[1])
+
+    output_shape = list(node.tensor_meta["shape"])
+    input_dtype = ir.RankedTensorType(shift_tensor.type).element_type
+
+    # Create scalar tensor for value
+    scalar_attr = ir.IntegerAttr.get(input_dtype, int(scalar_value))
+    scalar_tensor_type = ir.RankedTensorType.get(output_shape, input_dtype)
+    scalar_tensor_attr = ir.DenseElementsAttr.get_splat(
+        scalar_tensor_type, scalar_attr
+    )
+    scalar_tensor = tosa.ConstOp(scalar_tensor_attr).results[0]
+
+    return arith.ShLIOp(scalar_tensor, shift_tensor)
+
+
+def bitwise_right_shift_tensor_op(
+    node: BitwiseRightShiftTensorOp, symbol_table
+):
+    """
+    Perform element-wise bitwise right shift between two tensors.
+
+    Args:
+        node: Operation node with two tensor inputs
+        symbol_table: Symbol table mapping node names to values
+    """
+    input1 = symbol_table.get((str(node.args[0]), 0), node.args[0])
+    input2 = symbol_table.get((str(node.args[1]), 0), node.args[1])
+
+    output_shape = list(node.tensor_meta["shape"])
+    input_dtype = ir.RankedTensorType(input1.type).element_type
+
+    # Helper: broadcast a tensor to the target shape using addition
+    def broadcast_tensor(tensor, target_shape):
+        if list(tensor.type.shape) == target_shape:
+            return tensor
+
+        # Create a zero tensor of the target shape
+        element = ir.IntegerAttr.get(input_dtype, 0)
+        new_tensor_type = ir.RankedTensorType.get(target_shape, input_dtype)
+        new_tensor_attr = ir.DenseElementsAttr.get_splat(
+            new_tensor_type, element
+        )
+        zero_tensor = tosa.ConstOp(new_tensor_attr).results[0]
+
+        # Broadcast tensor to target shape using addition
+        return _gen_arith_binary_op(tensor, zero_tensor, tosa.AddOp).results[0]
+
+    input1 = broadcast_tensor(input1, output_shape)
+    input2 = broadcast_tensor(input2, output_shape)
+
+    # Use arithmetic (signed) right shift
+    return arith.ShRSIOp(input1, input2)
+
+
+def bitwise_right_shift_tensor_scalar_op(
+    node: BitwiseRightShiftTensorScalarOp, symbol_table
+):
+    """
+    Perform element-wise bitwise right shift of tensor by scalar.
+
+    Args:
+        node: Operation node with tensor input and scalar shift amount
+        symbol_table: Symbol table mapping node names to values
+    """
+    input_tensor = symbol_table.get((str(node.args[0]), 0), node.args[0])
+    shift_amount = node.args[1]
+
+    output_shape = list(node.tensor_meta["shape"])
+    input_dtype = ir.RankedTensorType(input_tensor.type).element_type
+
+    # Create scalar tensor for shift amount
+    scalar_attr = ir.IntegerAttr.get(input_dtype, int(shift_amount))
+    scalar_tensor_type = ir.RankedTensorType.get(output_shape, input_dtype)
+    scalar_tensor_attr = ir.DenseElementsAttr.get_splat(
+        scalar_tensor_type, scalar_attr
+    )
+    scalar_tensor = tosa.ConstOp(scalar_tensor_attr).results[0]
+
+    # Use arithmetic (signed) right shift
+    return arith.ShRSIOp(input_tensor, scalar_tensor)
+
+
+def bitwise_right_shift_scalar_tensor_op(
+    node: BitwiseRightShiftScalarTensorOp, symbol_table
+):
+    """
+    Perform element-wise bitwise right shift of scalar by tensor.
+
+    Args:
+        node: Operation node with scalar value and tensor shift amount
+        symbol_table: Symbol table mapping node names to values
+    """
+    scalar_value = node.args[0]
+    shift_tensor = symbol_table.get((str(node.args[1]), 0), node.args[1])
+
+    output_shape = list(node.tensor_meta["shape"])
+    input_dtype = ir.RankedTensorType(shift_tensor.type).element_type
+
+    # Create scalar tensor for value
+    scalar_attr = ir.IntegerAttr.get(input_dtype, int(scalar_value))
+    scalar_tensor_type = ir.RankedTensorType.get(output_shape, input_dtype)
+    scalar_tensor_attr = ir.DenseElementsAttr.get_splat(
+        scalar_tensor_type, scalar_attr
+    )
+    scalar_tensor = tosa.ConstOp(scalar_tensor_attr).results[0]
+
+    # Use arithmetic (signed) right shift
+    return arith.ShRSIOp(scalar_tensor, shift_tensor)
 
 
 # =============================================================================
@@ -9866,6 +10001,7 @@ ops_registry = {
     "MaskedFillOp": masked_fill_op,
     "ZerosOp": zeros_op,
     "ZerosLikeOp": zeros_like_op,
+    "EmptyOp": empty_op,
     "OnesLikeOp": ones_like_op,
     "FullLikeOp": full_like_op,
     "AllOp": all_op,
@@ -9970,6 +10106,7 @@ ops_registry = {
     # Additional elementwise operations
     "HypotOp": hypot_op,
     "CopysignOp": copysign_op,
+    "CopysignScalarOp": copysign_scalar_op,
     "SignOp": sign_op,
     "NextafterOp": nextafter_op,
     "MaskedScatterOp": masked_scatter_op,
@@ -9977,13 +10114,23 @@ ops_registry = {
     # Backward operations (Gradient Computation)
     "AdaptiveAvgPool2dBackwardOp": adaptive_avg_pool2d_backward_op,
     "AvgPool2dBackwardOp": avg_pool2d_backward_op,
-    "ConvolutionBackwardOp": convolution_backward_op,
     "NativeGroupNormBackwardOp": native_group_norm_backward_op,
     "NativeLayerNormBackwardOp": native_layer_norm_backward_op,
     # Bitwise scalar operations
     "BitwiseAndScalarOp": bitwise_and_scalar_op,
     "BitwiseOrScalarOp": bitwise_or_scalar_op,
     "BitwiseXorScalarOp": bitwise_xor_scalar_op,
+    # Bitwise Scalar_Tensor operations (scalar is first argument)
+    "BitwiseAndScalarTensorOp": bitwise_and_scalar_tensor_op,
+    "BitwiseOrScalarTensorOp": bitwise_or_scalar_tensor_op,
+    "BitwiseXorScalarTensorOp": bitwise_xor_scalar_tensor_op,
+    # Bitwise shift operations
+    "BitwiseLeftShiftTensorOp": bitwise_left_shift_tensor_op,
+    "BitwiseLeftShiftTensorScalarOp": bitwise_left_shift_tensor_scalar_op,
+    "BitwiseLeftShiftScalarTensorOp": bitwise_left_shift_scalar_tensor_op,
+    "BitwiseRightShiftTensorOp": bitwise_right_shift_tensor_op,
+    "BitwiseRightShiftTensorScalarOp": bitwise_right_shift_tensor_scalar_op,
+    "BitwiseRightShiftScalarTensorOp": bitwise_right_shift_scalar_tensor_op,
     # Padding operations
     "ReflectionPad1dOp": reflection_pad1d_op,
     "ReflectionPad2dOp": reflection_pad2d_op,

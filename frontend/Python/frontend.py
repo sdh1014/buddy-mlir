@@ -138,6 +138,7 @@ class DynamoCompiler:
             "bmm.default": BatchMatmulOp,
             "div.Tensor": DivOp,
             "div.Tensor_mode": DivTensorModeOp,
+            "prims.div.default": PrimsDivOp,
             "_softmax.default": SoftmaxOp,
             "_log_softmax.default": LogSoftmaxOp,
             "clone.default": CloneOp,
@@ -146,6 +147,7 @@ class DynamoCompiler:
             "addmm.default": AddMMOp,
             "permute.default": PermuteOp,
             "convert_element_type.default": ConvertElementTypeOp,
+            "prims.convert_element_type.default": ConvertElementTypeOp,
             "sum.dim_IntList": SumDimOp,
             "tanh.default": TanhOp,
             "sub.Tensor": SubOp,
@@ -157,6 +159,8 @@ class DynamoCompiler:
             "getitem": GetItemOp,
             "convolution.default": Conv2dOp,
             "max_pool2d_with_indices.default": MaxPool2dWithIndicesOp,
+            "fractional_max_pool2d.default": FractionalMaxPool2dOp,
+            "fractional_max_pool2d.output": FractionalMaxPool2dOp,
             "max_pool1d.default": MaxPool1dOp,
             "max_pool1d_with_indices.default": MaxPool1dOp,
             "max_pool3d.default": MaxPool3dOp,
@@ -170,6 +174,7 @@ class DynamoCompiler:
             "_adaptive_avg_pool3d.default": AdaptiveAvgPool3dOp,
             "relu.default": ReluOp,
             "iota.default": IotaOp,
+            "prims.iota.default": IotaOp,
             "sigmoid.default": SigmoidOp,
             "scalar_tensor.default": ScalarTensorOp,
             "where.self": WhereOp,
@@ -237,7 +242,13 @@ class DynamoCompiler:
             "scatter.src": ScatterSrcOp,
             "scatter.value": ScatterValueOp,
             "scatter_reduce.two": ScatterReduceOp,
+            "index_reduce.default": IndexReduceOp,
+            "index_reduce.out": IndexReduceOp,
+            "index_reduce_.default": IndexReduceOp,
             "gather.default": GatherOp,
+            "gcd.default": GcdOp,
+            "gcd.out": GcdOp,
+            "gcd_.default": GcdOp,
             "native_layer_norm.default": NativeLayerNormOp,
             "native_group_norm.default": NativeGroupNormOp,
             "_native_batch_norm_legit.default": NativeBatchNormLegitOp,
@@ -247,6 +258,8 @@ class DynamoCompiler:
             "upsample_bilinear2d.vec": UpsampleBilinear2dVecOp,
             "upsample_nearest2d.vec": UpsampleNearest2dVecOp,
             "grid_sampler_2d.default": GridSampler2dOp,
+            "grid_sampler_3d.default": GridSampler3dOp,
+            "grid_sampler_3d.out": GridSampler3dOp,
             "col2im.default": Col2imOp,
             "sym_size.int": SymSizeOp,
             "sym_stride.int": SymStrideOp,
@@ -254,6 +267,7 @@ class DynamoCompiler:
             "sym_storage_offset.default": SymStorageOffsetOp,
             "gelu.default": GeluOp,
             "flip.default": FlipOp,
+            "prims.rev.default": FlipOp,
             "leaky_relu.default": LeakyReluOp,
             "hardtanh.default": HardtanhOp,
             "elu.default": EluOp,
@@ -268,10 +282,14 @@ class DynamoCompiler:
             "zeros_like.default": ZerosLikeOp,
             "ones_like.default": OnesLikeOp,
             "full_like.default": FullLikeOp,
+            "histc.default": HistcOp,
+            "histc.out": HistcOp,
             "all.default": AllOp,
             "all.dim": AllOp,
             "any.default": AnyOp,
             "any.dim": AnyOp,
+            "isin.Scalar_Tensor": IsinScalarTensorOp,
+            "isin.Scalar_Tensor_out": IsinScalarTensorOp,
             "isinf.default": IsInfOp,
             "isnan.default": IsNanOp,
             "floor_divide.default": FloorDivideOp,
@@ -328,6 +346,7 @@ class DynamoCompiler:
             # Additional elementwise operations
             "hypot.default": HypotOp,
             "copysign.Tensor": CopysignOp,
+            "copysign.Scalar": CopysignScalarOp,
             "nextafter.default": NextafterOp,
             "masked_scatter.default": MaskedScatterOp,
             "rev.default": RevOp,
@@ -377,7 +396,6 @@ class DynamoCompiler:
             # Backward operations (Gradient Computation)
             "_adaptive_avg_pool2d_backward.default": AdaptiveAvgPool2dBackwardOp,
             "avg_pool2d_backward.default": AvgPool2dBackwardOp,
-            "convolution_backward.default": ConvolutionBackwardOp,
             "embedding_dense_backward.default": EmbeddingDenseBackwardOp,
             "max_pool2d_with_indices_backward.default": MaxPool2dWithIndicesBackwardOp,
             "native_group_norm_backward.default": NativeGroupNormBackwardOp,
@@ -386,6 +404,17 @@ class DynamoCompiler:
             "bitwise_and.Scalar": BitwiseAndScalarOp,
             "bitwise_or.Scalar": BitwiseOrScalarOp,
             "bitwise_xor.Scalar": BitwiseXorScalarOp,
+            # Bitwise Scalar_Tensor operations (scalar is first argument)
+            "bitwise_and.Scalar_Tensor": BitwiseAndScalarTensorOp,
+            "bitwise_or.Scalar_Tensor": BitwiseOrScalarTensorOp,
+            "bitwise_xor.Scalar_Tensor": BitwiseXorScalarTensorOp,
+            # Bitwise shift operations
+            "bitwise_left_shift.Tensor": BitwiseLeftShiftTensorOp,
+            "bitwise_left_shift.Tensor_Scalar": BitwiseLeftShiftTensorScalarOp,
+            "bitwise_left_shift.Scalar_Tensor": BitwiseLeftShiftScalarTensorOp,
+            "bitwise_right_shift.Tensor": BitwiseRightShiftTensorOp,
+            "bitwise_right_shift.Tensor_Scalar": BitwiseRightShiftTensorScalarOp,
+            "bitwise_right_shift.Scalar_Tensor": BitwiseRightShiftScalarTensorOp,
             # Padding operations
             "reflection_pad1d.default": ReflectionPad1dOp,
             "reflection_pad2d.default": ReflectionPad2dOp,
@@ -611,20 +640,67 @@ class DynamoCompiler:
                     )
                 elif gm_node.op == "get_attr":
                     if "_tensor_constant" in gm_node.name:
+                        # TorchDynamo/AOT may lift scalar constants into module
+                        # attributes like `_tensor_constant0`. Avoid brittle
+                        # stack-trace parsing: materialize from the attribute
+                        # value when possible, and fall back to metadata.
                         import re
 
-                        stack_trace = gm_node.meta.get("stack_trace")
-                        match = re.search(
-                            r"torch\.tensor\(([-+]?\d+(\.\d+)?), dtype=[a-zA-Z]+\)",
-                            stack_trace,
+                        meta_val = gm_node.meta.get("val")
+                        try:
+                            attr_val = getattr(_gm, gm_node.target)
+                        except Exception:
+                            attr_val = None
+
+                        scalar_value = None
+                        if isinstance(attr_val, torch.Tensor):
+                            if attr_val.numel() == 1:
+                                # AOTAutograd may run under FakeTensorMode; calling
+                                # `.item()` on a real tensor triggers a dispatch assert.
+                                # Disable torch dispatch temporarily to read the scalar.
+                                with torch._C._DisableTorchDispatch():
+                                    scalar_value = attr_val.item()
+                            else:
+                                raise NotImplementedError(
+                                    f"non-scalar _tensor_constant not supported: {gm_node.target}"
+                                )
+                        elif isinstance(attr_val, (int, float, bool)):
+                            scalar_value = attr_val
+                        elif isinstance(meta_val, torch.Tensor):
+                            if meta_val.numel() == 1:
+                                try:
+                                    scalar_value = meta_val.item()
+                                except Exception:
+                                    scalar_value = None
+
+                        if scalar_value is None:
+                            stack_trace = gm_node.meta.get("stack_trace") or ""
+                            # Be tolerant of e.g. torch.tensor(2) / torch.tensor(2, dtype=torch.int64)
+                            m = re.search(
+                                r"torch\.tensor\(\s*([-+]?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?)",
+                                stack_trace,
+                            )
+                            if m:
+                                scalar_value = float(m.group(1))
+
+                        if scalar_value is None:
+                            raise RuntimeError(
+                                f"failed to materialize _tensor_constant: {gm_node.target}"
+                            )
+
+                        gm_node.insert_arg(len(gm_node.args), scalar_value)
+
+                        tensor_val = (
+                            meta_val
+                            if isinstance(meta_val, torch.Tensor)
+                            else attr_val
                         )
-                        if not match:
-                            assert False
-                        value = float(match.group(1))
-                        gm_node.insert_arg(len(gm_node.args), value)
-                        val = gm_node.meta.get("val")
-                        node_shape = val.shape
-                        node_dtype = self._torch_dtype_translate(str(val.dtype))
+                        if not isinstance(tensor_val, torch.Tensor):
+                            tensor_val = torch.tensor(scalar_value)
+                        node_shape = tensor_val.shape
+                        node_dtype = self._torch_dtype_translate(
+                            str(tensor_val.dtype)
+                        )
                         buddy_node = self._create_node(
                             "_tensor_constant",
                             gm_node.name,
@@ -640,14 +716,28 @@ class DynamoCompiler:
                     # num_returns = len(gm_node.target._schema.returns)
                     num_returns = (
                         len(val)
-                        if isinstance(val, list)
+                        if isinstance(val, (list, tuple))
                         else len(gm_node.target._schema.returns)
                     )
                     if num_returns == 1:
-                        node_dtype = self._torch_dtype_translate(
-                            str(tensor_meta.dtype)
-                        )
-                        node_shape = tensor_meta.shape
+                        # Use tensor_meta if available, otherwise fall back to val
+                        if tensor_meta is not None:
+                            node_dtype = self._torch_dtype_translate(
+                                str(tensor_meta.dtype)
+                            )
+                            node_shape = tensor_meta.shape
+                        else:
+                            # tensor_meta is None, use val directly
+                            # val could be a list (e.g., from unbind) even for num_returns == 1
+                            actual_val = (
+                                val[0]
+                                if isinstance(val, (list, tuple))
+                                else val
+                            )
+                            node_dtype = self._torch_dtype_translate(
+                                str(actual_val.dtype)
+                            )
+                            node_shape = actual_val.shape
                     elif num_returns > 1:
                         node_dtype = tuple(
                             [
@@ -659,8 +749,16 @@ class DynamoCompiler:
                     else:
                         raise RuntimeError("Zero returns is not supported.")
 
+                    gm_node_name = str(gm_node.target.__name__)
+                    schema = getattr(gm_node.target, "_schema", None)
+                    schema_name = getattr(schema, "name", None)
+                    if isinstance(schema_name, str) and schema_name.startswith(
+                        "prims::"
+                    ):
+                        gm_node_name = f"prims.{gm_node_name}"
+
                     buddy_node = self._create_node(
-                        str(gm_node.target.__name__),
+                        gm_node_name,
                         gm_node.name,
                         gm_node.args,
                         node_users,
