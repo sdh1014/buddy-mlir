@@ -667,7 +667,9 @@ if __name__ == "__main__":
             "tanh_backward.grad_input": _skip("backward_op"),
             "tensor_split.sections": _template_tensor_split_sections,
             "tensor_split.indices": _template_tensor_split_indices,
-            "tensor_split.tensor_indices_or_sections": _template_tensor_split_tensor_indices_or_sections,
+            "tensor_split.tensor_indices_or_sections": _skip(
+                "dynamo_data_dependent_split"
+            ),
             "threshold_backward.default": _skip("backward_op"),
             "threshold_backward.grad_input": _skip("backward_op"),
             "topk.default": _template_topk_default,

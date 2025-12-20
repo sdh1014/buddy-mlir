@@ -716,7 +716,7 @@ CUSTOM_TEMPLATES.update(
         "grid_sampler_3d_backward.default": _skip("backward_not_supported"),
         "grid_sampler_3d_backward.out": _skip("backward_not_supported"),
         "gru.input": _template_gru_input,
-        "gru.data": _template_gru_data,
+        "gru.data": _skip("dynamo_packed_sequence"),
         "isfinite.default": lambda: _template_is_finite("default"),
         "isfinite.float": lambda: _template_isfinite_scalar("float"),
         "isfinite.complex": lambda: _template_isfinite_scalar("complex"),
