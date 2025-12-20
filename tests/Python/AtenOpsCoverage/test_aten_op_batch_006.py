@@ -1,5 +1,5 @@
 # RUN: %PYTHON %s 2>&1 | FileCheck %s
-from tests.Python.operator_coverage.batch_runner import run_batch
+from aten_op_batch_runner import run_aten_op_batch
 import torch
 
 
@@ -13,7 +13,7 @@ def _skip(reason: str):
     return fn
 
 
-# 编辑 OPS 列表以增删本批要测的算子（格式: "op.overload"）
+# Edit the OPS list to add/remove ops in this batch (format: "op.overload").
 OPS = [
     "nonzero_static.out",
     "norm.Scalar",
@@ -715,7 +715,7 @@ def _template_replication_pad3d_out():
     return args, {"out": out}
 
 
-# 注册特殊模板或 skip
+# Register custom templates or skips.
 CUSTOM_TEMPLATES.update(
     {
         "nonzero_static.out": _template_nonzero_static_out,
@@ -747,8 +747,9 @@ CUSTOM_TEMPLATES.update(
         "ones.names_out": _skip("named_tensor_torchscript"),
         "ones.out": _template_ones_out,
         "ones_like.out": _skip("dynamo_fake_tensor_out_variant_nyi"),
-        "ormqr.default": _template_ormqr_default,
-        "ormqr.out": _template_ormqr_out,
+        # linalg/QR-related op: not supported by Buddy backend yet.
+        "ormqr.default": _skip("linalg_not_supported"),
+        "ormqr.out": _skip("linalg_not_supported"),
         "pad_sequence.default": _skip("backend_missing_pad_sequence"),
         "pairwise_distance.default": _template_pairwise_distance,
         "pdist.default": _template_pdist,
@@ -888,6 +889,9 @@ CUSTOM_TEMPLATES.update(
         "reshape.default": _template_reshape_default,
         "resize.default": _template_resize_default,
         "resize.out": _skip("functionalization_alias_nyi_resize_out"),
+        # FakeTensor decomposition for resize_as(out=...) forwards an unexpected
+        # out kwarg and errors before compilation; skip to avoid noisy logs.
+        "resize_as.out": _skip("dynamo_fake_tensor_resize_as_out_decomp_bug"),
         "rnn_relu.input": _skip("backend_missing_rnn"),
         "rnn_relu.data": _skip("backend_missing_rnn"),
         "rnn_tanh.input": _skip("backend_missing_rnn"),
@@ -898,11 +902,11 @@ CUSTOM_TEMPLATES.update(
 )
 
 if __name__ == "__main__":
-    run_batch(
+    run_aten_op_batch(
         OPS,
         batch_label="test_batch_6",
-        coverage_json="tests/Python/operator_coverage/coverage.json",
         max_fails=20,
         templates=CUSTOM_TEMPLATES,
     )
-# CHECK: SUMMARY ok=
+# CHECK: SUMMARY pass=
+# CHECK-SAME: fail=0

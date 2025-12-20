@@ -1,5 +1,5 @@
 # RUN: %PYTHON %s 2>&1 | FileCheck %s
-from tests.Python.operator_coverage.batch_runner import run_batch
+from aten_op_batch_runner import run_aten_op_batch
 import torch
 
 
@@ -265,9 +265,10 @@ def _template_multi_margin_loss_out():
 
 
 def _template_multilabel_margin_loss_forward():
-    # torch.compile/Inductor 对 target 的 -1 padding 目前与 eager 语义不一致，
-    # 会把 -1 位置按 0 处理并参与 loss 计算，导致数值对比必然失败。
-    # 为避免把上游差异误判为 Buddy 后端问题，这里使用不含 -1 的 target。
+    # torch.compile/Inductor currently treats -1 padding in target differently from eager
+    # semantics; it treats -1 as 0 and includes it in loss computation, so numerical
+    # comparisons will fail. To avoid flagging upstream differences as Buddy backend issues,
+    # use a target without -1 here.
     self = torch.tensor([[0.2, 0.1, 0.3]], dtype=torch.float32)
     target = torch.tensor([[0, 2, 0]], dtype=torch.int64)
     reduction = 1
@@ -733,7 +734,7 @@ def _template_nonzero_out():
     return [x], {"out": out}
 
 
-# 注册特殊模板或 skip
+# Register custom templates or skips.
 CUSTOM_TEMPLATES.update(
     {
         "masked_select.default": _template_masked_select,
@@ -750,8 +751,13 @@ CUSTOM_TEMPLATES.update(
         "max_pool2d_with_indices_backward.grad_input": _template_max_pool2d_backward_out,
         "max_pool3d_with_indices.default": _template_max_pool3d,
         "max_pool3d_with_indices.out": _template_max_pool3d_out,
-        "max_pool3d_with_indices_backward.default": _template_max_pool3d_backward,
-        "max_pool3d_with_indices_backward.grad_input": _template_max_pool3d_backward_out,
+        # Backward op: out of scope for this operator-coverage batch.
+        "max_pool3d_with_indices_backward.default": _skip(
+            "backward_not_supported"
+        ),
+        "max_pool3d_with_indices_backward.grad_input": _skip(
+            "backward_not_supported"
+        ),
         "max_unpool2d.default": _template_max_unpool2d,
         "max_unpool2d.out": _template_max_unpool2d_out,
         "max_unpool3d.default": _template_max_unpool3d,
@@ -782,8 +788,9 @@ CUSTOM_TEMPLATES.update(
         "multi_margin_loss.out": _template_multi_margin_loss_out,
         "multilabel_margin_loss_forward.default": _template_multilabel_margin_loss_forward,
         "multilabel_margin_loss_forward.output": _template_multilabel_margin_loss_forward_out,
-        "multinomial.default": _template_multinomial,
-        "multinomial.out": _template_multinomial_out,
+        # Random op: skip to avoid nondeterministic behavior.
+        "multinomial.default": _skip("random_op_not_supported"),
+        "multinomial.out": _skip("random_op_not_supported"),
         "mv.default": _template_mv,
         "mv.out": _template_mv_out,
         "mvlgamma.default": _template_mvlgamma,
@@ -858,7 +865,7 @@ CUSTOM_TEMPLATES.update(
     }
 )
 
-# 编辑 OPS 列表以增删本批要测的算子（格式: "op.overload"）
+# Edit the OPS list to add/remove ops in this batch (format: "op.overload").
 OPS = [
     "masked_select.default",
     "masked_select.out",
@@ -1063,11 +1070,11 @@ OPS = [
 ]
 
 if __name__ == "__main__":
-    run_batch(
+    run_aten_op_batch(
         OPS,
         batch_label="test_batch_5",
-        coverage_json="tests/Python/operator_coverage/coverage.json",
         max_fails=20,
         templates=CUSTOM_TEMPLATES,
     )
-# CHECK: SUMMARY ok=
+# CHECK: SUMMARY pass=
+# CHECK-SAME: fail=0

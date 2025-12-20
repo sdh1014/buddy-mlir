@@ -1001,6 +1001,12 @@ class RepeatOp(Op):
         self._op_type = OpType.ElementwiseType
 
 
+class RepeatInterleaveOp(Op):
+    def __init__(self) -> None:
+        super().__init__()
+        self._op_type = OpType.ReshapeType
+
+
 class AsStridedOp(Op):
     def __init__(self) -> None:
         super().__init__()
@@ -1067,6 +1073,30 @@ class ScatterReduceOp(Op):
         self._op_type = OpType.ReduceType
 
 
+class ScatterSrcReduceOp(Op):
+    """
+    Scatter operation with source tensor and reduce.
+    Implements aten.scatter.reduce: self[index] = reduce(self[index], src)
+    Similar to ScatterReduceOp but reduce comes from kwargs.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._op_type = OpType.ReduceType
+
+
+class ScatterValueReduceOp(Op):
+    """
+    Scatter operation with scalar value and reduce.
+    Implements aten.scatter.value_reduce: self[index] = reduce(self[index], value)
+    Scatters a scalar value with reduction operation.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._op_type = OpType.ReduceType
+
+
 class ScatterAddOp(Op):
     """
     Scatter add operation.
@@ -1106,6 +1136,17 @@ class SortOp(Op):
     Sort operation.
     Implements aten.sort: sorts a tensor along a dimension.
     Returns (sorted_values, indices).
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._op_type = OpType.ReduceType
+
+
+class SearchsortedOp(Op):
+    """
+    Searchsorted operation.
+    Implements aten.searchsorted: finds insertion indices of values in a sorted sequence.
     """
 
     def __init__(self) -> None:
@@ -1523,6 +1564,39 @@ class MedianDimOp(Op):
         self._op_type = OpType.ReduceType
 
 
+class MedianDefaultOp(Op):
+    """
+    Median of all elements.
+    Implements aten.median.default: returns scalar median of all elements.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._op_type = OpType.ReduceType
+
+
+class NanmedianDefaultOp(Op):
+    """
+    Median of all elements ignoring NaN.
+    Implements aten.nanmedian.default: returns scalar median ignoring NaN values.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._op_type = OpType.ReduceType
+
+
+class NanmedianDimOp(Op):
+    """
+    Median along a dimension ignoring NaN.
+    Implements aten.nanmedian.dim: returns (values, indices) of median along dim ignoring NaN.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._op_type = OpType.ReduceType
+
+
 class ModeOp(Op):
     """
     Mode operation.
@@ -1714,6 +1788,18 @@ class SignOp(Op):
     """
     Sign operation.
     Implements aten.sign: Returns a tensor with the signs of the elements of input.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._op_type = OpType.ElementwiseType
+
+
+class SignbitOp(Op):
+    """
+    Signbit operation.
+    Implements aten.signbit: Returns a bool tensor indicating if each element has its sign bit set.
+    Returns True for negative values and negative zero.
     """
 
     def __init__(self) -> None:
@@ -2283,6 +2369,17 @@ class NonzeroOp(Op):
         self._op_type = OpType.ReshapeType
 
 
+class NonzeroStaticOp(Op):
+    """
+    Nonzero elements with static output size.
+    Implements aten.nonzero_static.default: Returns indices of nonzero elements with fixed size.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._op_type = OpType.ReshapeType
+
+
 class StdDefaultOp(Op):
     """
     Standard deviation over all elements.
@@ -2320,6 +2417,17 @@ class SumDefaultOp(Op):
     """
     Sum over all elements.
     Implements aten.sum.default: Computes sum of all elements.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._op_type = OpType.ReshapeType
+
+
+class MinDefaultOp(Op):
+    """
+    Min over all elements.
+    Implements aten.min.default: Computes min of all elements.
     """
 
     def __init__(self) -> None:
@@ -2736,6 +2844,152 @@ class LocalScalarDenseOp(Op):
 
 class ResizeOp(Op):
     """Resize tensor in-place"""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._op_type = OpType.ReshapeType
+
+
+# === Special Math Functions ===
+
+
+class NdtrOp(Op):
+    """
+    Normal distribution CDF.
+    Implements aten.special_ndtr: ndtr(x) = 0.5 * (1 + erf(x / sqrt(2)))
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._op_type = OpType.ElementwiseType
+
+
+class LogNdtrOp(Op):
+    """
+    Log of normal distribution CDF.
+    Implements aten.special_log_ndtr: log(ndtr(x))
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._op_type = OpType.ElementwiseType
+
+
+class Xlog1pyOp(Op):
+    """
+    Compute x * log1p(y) with special handling for x=0.
+    Implements aten.special_xlog1py.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._op_type = OpType.ElementwiseType
+
+
+class NdtriOp(Op):
+    """
+    Inverse of normal distribution CDF.
+    Implements aten.special_ndtri: ndtri(ndtr(x)) = x
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._op_type = OpType.ElementwiseType
+
+
+class XlogyOp(Op):
+    """
+    Compute x * log(y) with special handling for x=0.
+    Implements aten.xlogy.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._op_type = OpType.ElementwiseType
+
+
+class XlogyScalarOtherOp(Op):
+    """
+    Compute x * log(scalar) with special handling for x=0.
+    Implements aten.xlogy.Scalar_Other.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._op_type = OpType.ElementwiseType
+
+
+class XlogyScalarSelfOp(Op):
+    """
+    Compute scalar * log(y) with special handling for scalar=0.
+    Implements aten.xlogy.Scalar_Self.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._op_type = OpType.ElementwiseType
+
+
+class TrilOp(Op):
+    """
+    Lower triangular part of a matrix.
+    Implements aten.tril.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._op_type = OpType.ReshapeType
+
+
+class TriuOp(Op):
+    """
+    Upper triangular part of a matrix.
+    Implements aten.triu.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._op_type = OpType.ReshapeType
+
+
+class TrilIndicesOp(Op):
+    """
+    Indices of lower triangular part.
+    Implements aten.tril_indices.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._op_type = OpType.ReshapeType
+
+
+class TriuIndicesOp(Op):
+    """
+    Indices of upper triangular part.
+    Implements aten.triu_indices.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._op_type = OpType.ReshapeType
+
+
+class TriangularSolveOp(Op):
+    """
+    Solve triangular system of linear equations.
+    Implements aten.triangular_solve.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._op_type = OpType.BroadcastType
+
+
+class UpsampleTrilinear3dOp(Op):
+    """
+    3D trilinear upsampling.
+    Implements aten.upsample_trilinear3d.
+    """
 
     def __init__(self) -> None:
         super().__init__()

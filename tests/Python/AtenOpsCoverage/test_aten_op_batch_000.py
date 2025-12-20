@@ -1,8 +1,8 @@
 # RUN: %PYTHON %s 2>&1 | FileCheck %s
-from tests.Python.operator_coverage.batch_runner import run_batch
+from aten_op_batch_runner import run_aten_op_batch
 import torch
 
-# 为本批次定义特殊输入模板，便于逐个调整
+# Define custom input templates for this batch to allow per-op tuning.
 CUSTOM_TEMPLATES = {}
 
 
@@ -108,7 +108,7 @@ def _wrap_out_tensor(base_template):
     def fn():
         args, kwargs = base_template()
         kwargs = dict(kwargs)
-        # 假设 bias/self 作为 out 基础
+        # Assume bias/self provides the base shape for out.
         out_shape = args[0].shape if args else ()
         kwargs["out"] = torch.empty(out_shape, dtype=torch.float32)
         return args, kwargs
@@ -179,8 +179,10 @@ def _template_as_strided():
 
 
 def _template_as_strided_inplace_safe():
-    # torch.compile 目前在 as_strided_ + 多维 size/stride 下会触发 ShapeEnv guard 的内部 IndexError。
-    # 这里用 1D identity 形状避免 Dynamo 入口必炸，同时保留对 as_strided_ 的覆盖。
+    # torch.compile currently triggers an internal ShapeEnv guard IndexError for
+    # as_strided_ with multi-dim size/stride.
+    # Use a 1D identity shape to avoid a Dynamo entry crash while keeping
+    # as_strided_ coverage.
     x = torch.arange(6, dtype=torch.float32)
     size = [6]
     stride = [1]
@@ -369,7 +371,7 @@ def _template_dimname_out(is_all: bool):
     return args, {"out": out}
 
 
-# 填充需要特殊输入的算子
+# Populate ops that need special inputs.
 CUSTOM_TEMPLATES.update(
     {
         "addmm.default": _template_addmm,
@@ -489,11 +491,17 @@ CUSTOM_TEMPLATES.update(
         "any.dimname": _skip("dimname_not_supported"),
         "any.dimname_out": _skip("dimname_not_supported"),
         "angle.Scalar": lambda: ([0.5], {}),
+        "bernoulli.default": _skip("randop_not_supported"),
+        "bernoulli.out": _skip("randop_not_supported"),
+        "bernoulli.p": _skip("randop_not_supported"),
+        "bernoulli.Tensor": _skip("randop_not_supported"),
+        "bernoulli.Tensor_out": _skip("randop_not_supported"),
         "bernoulli.float_out": _skip("randop_not_supported"),
+        "bernoulli_.Tensor": _skip("randop_not_supported"),
     }
 )
 
-# 编辑 OPS 列表以增删本批要测的算子（格式: "op.overload"）
+# Edit the OPS list to add/remove ops in this batch (format: "op.overload").
 OPS = [
     "abs.default",
     "abs.out",
@@ -698,12 +706,12 @@ OPS = [
 ]
 
 if __name__ == "__main__":
-    run_batch(
+    run_aten_op_batch(
         OPS,
         batch_label="test_batch_0",
-        coverage_json="tests/Python/operator_coverage/coverage.json",
         max_fails=20,
         templates=CUSTOM_TEMPLATES,
         show_skips=True,
     )
-# CHECK: SUMMARY ok=
+# CHECK: SUMMARY pass=
+# CHECK-SAME: fail=0

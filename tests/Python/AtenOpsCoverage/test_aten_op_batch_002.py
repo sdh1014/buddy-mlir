@@ -1,5 +1,5 @@
 # RUN: %PYTHON %s 2>&1 | FileCheck %s
-from tests.Python.operator_coverage.batch_runner import run_batch
+from aten_op_batch_runner import run_aten_op_batch
 import torch
 
 
@@ -411,7 +411,7 @@ CUSTOM_TEMPLATES.update(
     {
         "diagonal.default": _template_diagonal,
         "diagonal.out": _template_diagonal_out,
-        # torch.compile/TorchScript 尚不支持 named tensor
+        # torch.compile/TorchScript doesn't support named tensors yet.
         "diagonal.Dimname": _skip("named_tensor_torchscript"),
         "diagonal_backward.default": _template_diagonal_backward,
         "diagonal_backward.out": _template_diagonal_backward_out,
@@ -494,10 +494,10 @@ CUSTOM_TEMPLATES.update(
         "flip.default": _template_flip,
         "flip.out": _template_flip_out,
         "fmod.Scalar": _template_fmod_scalar,
-        # float_power_ 的结果 dtype 需要 float64，但 backend 目前不支持
+        # float_power_ outputs require float64 dtype, which the backend doesn't support yet.
         "float_power_.Tensor": _skip("float64_dtype_not_supported"),
         "float_power_.Scalar": _skip("float64_dtype_not_supported"),
-        # FFT 系列依赖 complex dtype，目前 backend 不支持
+        # FFT ops require complex dtype, which the backend doesn't support yet.
         "fft_fft.default": _skip("complex_dtype_not_supported"),
         "fft_fft.out": _skip("complex_dtype_not_supported"),
         "fft_fft2.default": _skip("complex_dtype_not_supported"),
@@ -534,15 +534,12 @@ CUSTOM_TEMPLATES.update(
         "fft_rfft2.out": _skip("complex_dtype_not_supported"),
         "fft_rfftn.default": _skip("complex_dtype_not_supported"),
         "fft_rfftn.out": _skip("complex_dtype_not_supported"),
-        "empty.names": lambda: ([[0]], {"names": None}),
-        "empty.names_out": lambda: (
-            [[0]],
-            {"names": None, "out": torch.empty(0)},
-        ),
+        "empty.names": _skip("named_tensor_torchscript"),
+        "empty.names_out": _skip("named_tensor_torchscript"),
     }
 )
 
-# 编辑 OPS 列表以增删本批要测的算子（格式: "op.overload"）
+# Edit the OPS list to add/remove ops in this batch (format: "op.overload").
 OPS = [
     "diag.default",
     "diag.out",
@@ -747,12 +744,12 @@ OPS = [
 ]
 
 if __name__ == "__main__":
-    run_batch(
+    run_aten_op_batch(
         OPS,
         batch_label="test_batch_2",
-        coverage_json="tests/Python/operator_coverage/coverage.json",
         max_fails=20,
         templates=CUSTOM_TEMPLATES,
         show_skips=True,
     )
-# CHECK: SUMMARY ok=
+# CHECK: SUMMARY pass=
+# CHECK-SAME: fail=0

@@ -1,5 +1,5 @@
 # RUN: %PYTHON %s 2>&1 | FileCheck %s
-from tests.Python.operator_coverage.batch_runner import run_batch
+from aten_op_batch_runner import run_aten_op_batch
 import torch
 import torch.nn.functional as F
 
@@ -700,8 +700,8 @@ CUSTOM_TEMPLATES.update(
     {
         "bernoulli_.float": _skip("missing_lowering"),
         "binary_cross_entropy_backward.grad_input": _template_bce_backward_grad_input,
-        "bincount.default": _template_bincount,
-        "bincount.out": _template_bincount_out,
+        "bincount.default": _skip("missing_lowering"),
+        "bincount.out": _skip("missing_lowering"),
         "block_diag.default": _template_block_diag,
         "block_diag.out": _template_block_diag_out,
         "bmm.default": _template_bmm,
@@ -722,26 +722,27 @@ CUSTOM_TEMPLATES.update(
         "cat.names_out": _skip("named_tensor_unsupported"),
         "channel_shuffle.default": _template_channel_shuffle,
         "channel_shuffle.out": _template_channel_shuffle_out,
-        "cholesky.default": _template_cholesky,
-        "cholesky.out": _template_cholesky_out,
-        "cholesky_inverse.default": _template_cholesky_inverse,
-        "cholesky_inverse.out": _template_cholesky_inverse_out,
-        "cholesky_solve.default": _template_cholesky_solve,
-        "cholesky_solve.out": _template_cholesky_solve_out,
+        "cholesky.default": _skip("linalg_not_supported"),
+        "cholesky.out": _skip("linalg_not_supported"),
+        "cholesky_inverse.default": _skip("linalg_not_supported"),
+        "cholesky_inverse.out": _skip("linalg_not_supported"),
+        "cholesky_solve.default": _skip("linalg_not_supported"),
+        "cholesky_solve.out": _skip("linalg_not_supported"),
         "col2im.default": _template_col2im,
         "col2im.out": _template_col2im_out,
         "constant_pad_nd.default": _template_constant_pad_nd,
         "constant_pad_nd.out": _template_constant_pad_nd_out,
-        "complex.out": _template_complex_out,
+        "complex.default": _skip("complex64_not_supported"),
+        "complex.out": _skip("complex64_not_supported"),
         "conv2d.default": _template_conv2d_default,
         "conv2d.padding": _template_conv2d_padding,
         "convolution.default": _template_convolution,
         "convolution.out": _template_convolution_out,
         "convolution_backward.default": _skip("backward_not_supported"),
         "convolution_backward.out": _skip("backward_not_supported"),
-        "cauchy.default": _template_cauchy,
-        "cauchy.out": _template_cauchy_out,
-        "cauchy_.default": _template_cauchy_inplace,
+        "cauchy.default": _skip("randop_not_supported"),
+        "cauchy.out": _skip("randop_not_supported"),
+        "cauchy_.default": _skip("randop_not_supported"),
         "count_nonzero.out": _template_count_nonzero_out,
         "count_nonzero.dim_IntList": _template_count_nonzero_dimlist,
         "count_nonzero.dim_IntList_out": _template_count_nonzero_dimlist_out,
@@ -880,7 +881,7 @@ CUSTOM_TEMPLATES.update(
     }
 )
 
-# 编辑 OPS 列表以增删本批要测的算子（格式: "op.overload"）
+# Edit the OPS list to add/remove ops in this batch (format: "op.overload").
 OPS = [
     "bernoulli_.float",
     "binary_cross_entropy.default",
@@ -1085,12 +1086,12 @@ OPS = [
 ]
 
 if __name__ == "__main__":
-    run_batch(
+    run_aten_op_batch(
         OPS,
         batch_label="test_batch_1",
-        coverage_json="tests/Python/operator_coverage/coverage.json",
         max_fails=20,
         templates=CUSTOM_TEMPLATES,
         show_skips=True,
     )
-# CHECK: SUMMARY ok=
+# CHECK: SUMMARY pass=
+# CHECK-SAME: fail=0

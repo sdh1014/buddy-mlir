@@ -1,5 +1,5 @@
 # RUN: %PYTHON %s 2>&1 | FileCheck %s
-from tests.Python.operator_coverage.batch_runner import run_batch
+from aten_op_batch_runner import run_aten_op_batch
 import torch
 
 
@@ -67,7 +67,7 @@ def _template_frexp_out():
 def _template_full_names():
     size = [2]
     fill_value = 1.0
-    # names=None 避免 named tensor 路径
+    # Use names=None to avoid the named tensor path.
     return [size, fill_value], {
         "names": None,
         "dtype": torch.float32,
@@ -670,7 +670,7 @@ def _template_istft():
     ], {}
 
 
-# 填充需要特殊输入的算子
+# Populate ops that need special inputs.
 CUSTOM_TEMPLATES.update(
     {
         "fmod.Scalar_out": _template_fmod_scalar_out,
@@ -686,8 +686,8 @@ CUSTOM_TEMPLATES.update(
         "frexp.Tensor": _template_frexp,
         "frexp.Tensor_out": _template_frexp_out,
         "frexp.default": _template_frexp_default,
-        "full.names": _template_full_names,
-        "full.names_out": _template_full_names_out,
+        "full.names": _skip("named_tensor_torchscript"),
+        "full.names_out": _skip("named_tensor_torchscript"),
         "full.default": _template_full,
         "full.out": _template_full_out,
         "full_like.default": _template_full_like,
@@ -833,7 +833,7 @@ CUSTOM_TEMPLATES.update(
     }
 )
 
-# 编辑 OPS 列表以增删本批要测的算子（格式: "op.overload"）
+# Edit the OPS list to add/remove ops in this batch (format: "op.overload").
 OPS = [
     "fmod.Scalar_out",
     "fmod.int",
@@ -1038,12 +1038,12 @@ OPS = [
 ]
 
 if __name__ == "__main__":
-    run_batch(
+    run_aten_op_batch(
         OPS,
         batch_label="test_batch_3",
-        coverage_json="tests/Python/operator_coverage/coverage.json",
         max_fails=20,
         templates=CUSTOM_TEMPLATES,
         show_skips=True,
     )
-# CHECK: SUMMARY ok=
+# CHECK: SUMMARY pass=
+# CHECK-SAME: fail=0

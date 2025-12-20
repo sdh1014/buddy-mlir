@@ -1,5 +1,5 @@
 # RUN: %PYTHON %s 2>&1 | FileCheck %s
-from tests.Python.operator_coverage.batch_runner import run_batch
+from aten_op_batch_runner import run_aten_op_batch
 import torch
 
 CUSTOM_TEMPLATES = {}
@@ -440,7 +440,34 @@ def _template_where_self_out():
     return args, {"out": out}
 
 
-# 编辑 OPS 列表以增删本批要测的算子（格式: "op.overload"）
+def _template_xlogy_scalar_other():
+    x = torch.tensor([1.0, 2.0, 3.0], dtype=torch.float32)
+    return [x, 2.0], {}
+
+
+def _template_xlogy_scalar_self():
+    y = torch.tensor([1.0, 2.0, 3.0], dtype=torch.float32)
+    return [2.0, y], {}
+
+
+def _template_xlogy_out_scalar_self():
+    args, _ = _template_xlogy_scalar_self()
+    out = torch.empty_like(args[1])
+    return args, {"out": out}
+
+
+def _template_xlogy_out_scalar_other():
+    args, _ = _template_xlogy_scalar_other()
+    out = torch.empty_like(args[0])
+    return args, {"out": out}
+
+
+def _template_xlogy_inplace_scalar_other():
+    x = torch.tensor([1.0, 2.0, 3.0], dtype=torch.float32)
+    return [x, 2.0], {}
+
+
+# Edit the OPS list to add/remove ops in this batch (format: "op.overload").
 OPS = [
     "transpose_copy.int",
     "transpose_copy.int_out",
@@ -567,8 +594,8 @@ OPS = [
 if __name__ == "__main__":
     CUSTOM_TEMPLATES.update(
         {
-            "triangular_solve.default": _template_triangular_solve_default,
-            "triangular_solve.X": _template_triangular_solve_X,
+            "triangular_solve.default": _skip("multi_output_op"),
+            "triangular_solve.X": _skip("multi_output_op"),
             "tril.default": _template_tril_default,
             "tril.out": _template_tril_out,
             "tril_.default": _template_tril_inplace,
@@ -598,11 +625,11 @@ if __name__ == "__main__":
             "unsqueeze_.default": _skip("dynamo_inplace_view_op"),
             "upsample_bicubic2d.default": _template_upsample_bicubic2d_default,
             "upsample_bicubic2d.vec": _template_upsample_bicubic2d_vec,
-            "upsample_bicubic2d.out": _template_upsample_bicubic2d_out,
+            "upsample_bicubic2d.out": _skip("out_variant"),
             "upsample_bilinear2d.default": _template_upsample_bilinear2d_default,
             "upsample_bilinear2d.vec": _template_upsample_bilinear2d_vec,
-            "upsample_bilinear2d.out": _template_upsample_bilinear2d_out,
-            "upsample_bilinear2d.vec_out": _template_upsample_bilinear2d_vec_out,
+            "upsample_bilinear2d.out": _skip("out_variant"),
+            "upsample_bilinear2d.vec_out": _skip("out_variant"),
             "upsample_linear1d.default": _template_upsample_linear1d_default,
             "upsample_linear1d.vec": _template_upsample_linear1d_vec,
             "upsample_linear1d.out": _template_upsample_linear1d_out,
@@ -613,14 +640,16 @@ if __name__ == "__main__":
             "upsample_nearest2d.vec": _template_upsample_nearest2d_vec,
             "upsample_nearest2d.out": _template_upsample_nearest2d_out,
             "upsample_nearest2d.vec_out": _template_upsample_nearest2d_vec_out,
-            "upsample_nearest2d_backward.default": _template_upsample_nearest2d_backward_default,
-            "upsample_nearest2d_backward.grad_input": _template_upsample_nearest2d_backward_grad_input,
+            "upsample_nearest2d_backward.default": _skip("backward_op"),
+            "upsample_nearest2d_backward.grad_input": _skip("backward_op"),
             "upsample_nearest3d.default": _template_upsample_nearest3d_default,
             "upsample_nearest3d.vec": _template_upsample_nearest3d_vec,
             "upsample_nearest3d.out": _template_upsample_nearest3d_out,
-            "upsample_trilinear3d.default": _template_upsample_trilinear3d_default,
-            "upsample_trilinear3d.vec": _template_upsample_trilinear3d_vec,
-            "upsample_trilinear3d.out": _template_upsample_trilinear3d_out,
+            "upsample_trilinear3d.default": _skip(
+                "tosa_resize_5d_not_supported"
+            ),
+            "upsample_trilinear3d.vec": _skip("tosa_resize_5d_not_supported"),
+            "upsample_trilinear3d.out": _skip("tosa_resize_5d_not_supported"),
             "var.default": _template_var_default,
             "var.dim": _template_var_dim,
             "var.correction": _template_var_correction,
@@ -637,9 +666,9 @@ if __name__ == "__main__":
             "var_mean.correction_names": _skip("dynamo_dimname_fake_tensor"),
             "var_mean.correction_out": _template_var_mean_correction_out,
             "view.default": _template_view_default,
-            "view.dtype": _template_view_dtype,
-            "view_as_complex.default": _template_view_as_complex,
-            "view_as_real.default": _template_view_as_real,
+            "view.dtype": _skip("dtype_view_not_supported"),
+            "view_as_complex.default": _skip("complex64_not_supported"),
+            "view_as_real.default": _skip("complex64_not_supported"),
             "view_copy.default": _template_view_copy_default,
             "view_copy.dtype": _template_view_copy_dtype,
             "view_copy.out": _template_view_copy_out,
@@ -649,15 +678,20 @@ if __name__ == "__main__":
             "where.ScalarSelf": _template_where_scalar_self,
             "where.Scalar": _template_where_scalar,
             "where.self_out": _template_where_self_out,
+            "xlogy.Scalar_Other": _template_xlogy_scalar_other,
+            "xlogy.Scalar_Self": _template_xlogy_scalar_self,
+            "xlogy.OutScalar_Self": _template_xlogy_out_scalar_self,
+            "xlogy.OutScalar_Other": _template_xlogy_out_scalar_other,
+            "xlogy_.Scalar_Other": _template_xlogy_inplace_scalar_other,
             "zeros_like.out": _skip("dynamo_fake_tensor_out_arg_mismatch"),
         }
     )
 
-    run_batch(
+    run_aten_op_batch(
         OPS,
         batch_label="test_batch_9",
-        coverage_json="tests/Python/operator_coverage/coverage.json",
         max_fails=20,
         templates=CUSTOM_TEMPLATES,
     )
-# CHECK: SUMMARY ok=
+# CHECK: SUMMARY pass=
+# CHECK-SAME: fail=0

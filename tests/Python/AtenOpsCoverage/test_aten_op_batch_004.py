@@ -1,5 +1,7 @@
+# RUN: %PYTHON %s 2>&1 | FileCheck %s
+
 import torch
-from tests.Python.operator_coverage.batch_runner import run_batch
+from aten_op_batch_runner import run_aten_op_batch
 
 CUSTOM_TEMPLATES = {}
 
@@ -556,7 +558,7 @@ def _template_lstm_data():
     ], {}
 
 
-# 注册特殊模板或 skip
+# Register custom templates or skips.
 CUSTOM_TEMPLATES.update(
     {
         "item.default": _template_item,
@@ -692,7 +694,7 @@ CUSTOM_TEMPLATES.update(
     }
 )
 
-# 编辑 OPS 列表以增删本批要测的算子（格式: "op.overload"）
+# Edit the OPS list to add/remove ops in this batch (format: "op.overload").
 OPS = [
     "item.default",
     "kthvalue.default",
@@ -897,12 +899,12 @@ OPS = [
 ]
 
 if __name__ == "__main__":
-    run_batch(
+    run_aten_op_batch(
         OPS,
         batch_label="test_batch_4",
-        coverage_json="tests/Python/operator_coverage/coverage.json",
         max_fails=20,
         templates=CUSTOM_TEMPLATES,
         show_skips=True,
     )
-# CHECK: SUMMARY ok=
+# CHECK: SUMMARY pass=
+# CHECK-SAME: fail=0

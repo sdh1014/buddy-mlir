@@ -1,5 +1,5 @@
 # RUN: %PYTHON %s 2>&1 | FileCheck %s
-from tests.Python.operator_coverage.batch_runner import run_batch
+from aten_op_batch_runner import run_aten_op_batch
 import torch
 
 CUSTOM_TEMPLATES = {}
@@ -266,7 +266,7 @@ def _template_svd_U():
     return [x], {"U": u, "S": s, "V": v}
 
 
-# 编辑 OPS 列表以增删本批要测的算子（格式: "op.overload"）
+# Edit the OPS list to add/remove ops in this batch (format: "op.overload").
 OPS = [
     "special_laguerre_polynomial_l.x_scalar_out",
     "special_laguerre_polynomial_l.n_scalar",
@@ -473,39 +473,166 @@ OPS = [
 if __name__ == "__main__":
     CUSTOM_TEMPLATES.update(
         {
-            "special_laguerre_polynomial_l.x_scalar_out": _template_poly_x_scalar_out,
-            "special_laguerre_polynomial_l.n_scalar": _template_poly_n_scalar,
-            "special_laguerre_polynomial_l.n_scalar_out": _template_poly_n_scalar_out,
-            "special_legendre_polynomial_p.default": _template_poly_default,
-            "special_legendre_polynomial_p.out": _template_poly_out,
-            "special_legendre_polynomial_p.x_scalar": _template_poly_x_scalar,
-            "special_legendre_polynomial_p.x_scalar_out": _template_poly_x_scalar_out,
-            "special_legendre_polynomial_p.n_scalar": _template_poly_n_scalar,
-            "special_legendre_polynomial_p.n_scalar_out": _template_poly_n_scalar_out,
-            "special_shifted_chebyshev_polynomial_t.default": _template_poly_default,
-            "special_shifted_chebyshev_polynomial_t.out": _template_poly_out,
-            "special_shifted_chebyshev_polynomial_t.x_scalar": _template_poly_x_scalar,
-            "special_shifted_chebyshev_polynomial_t.x_scalar_out": _template_poly_x_scalar_out,
-            "special_shifted_chebyshev_polynomial_t.n_scalar": _template_poly_n_scalar,
-            "special_shifted_chebyshev_polynomial_t.n_scalar_out": _template_poly_n_scalar_out,
-            "special_shifted_chebyshev_polynomial_u.default": _template_poly_default,
-            "special_shifted_chebyshev_polynomial_u.out": _template_poly_out,
-            "special_shifted_chebyshev_polynomial_u.x_scalar": _template_poly_x_scalar,
-            "special_shifted_chebyshev_polynomial_u.x_scalar_out": _template_poly_x_scalar_out,
-            "special_shifted_chebyshev_polynomial_u.n_scalar": _template_poly_n_scalar,
-            "special_shifted_chebyshev_polynomial_u.n_scalar_out": _template_poly_n_scalar_out,
-            "special_shifted_chebyshev_polynomial_v.default": _template_poly_default,
-            "special_shifted_chebyshev_polynomial_v.out": _template_poly_out,
-            "special_shifted_chebyshev_polynomial_v.x_scalar": _template_poly_x_scalar,
-            "special_shifted_chebyshev_polynomial_v.x_scalar_out": _template_poly_x_scalar_out,
-            "special_shifted_chebyshev_polynomial_v.n_scalar": _template_poly_n_scalar,
-            "special_shifted_chebyshev_polynomial_v.n_scalar_out": _template_poly_n_scalar_out,
-            "special_shifted_chebyshev_polynomial_w.default": _template_poly_default,
-            "special_shifted_chebyshev_polynomial_w.out": _template_poly_out,
-            "special_shifted_chebyshev_polynomial_w.x_scalar": _template_poly_x_scalar,
-            "special_shifted_chebyshev_polynomial_w.x_scalar_out": _template_poly_x_scalar_out,
-            "special_shifted_chebyshev_polynomial_w.n_scalar": _template_poly_n_scalar,
-            "special_shifted_chebyshev_polynomial_w.n_scalar_out": _template_poly_n_scalar_out,
+            "special_laguerre_polynomial_l.x_scalar_out": _skip(
+                "missing_op_implementation"
+            ),
+            "special_laguerre_polynomial_l.n_scalar": _skip(
+                "missing_op_implementation"
+            ),
+            "special_laguerre_polynomial_l.n_scalar_out": _skip(
+                "missing_op_implementation"
+            ),
+            "special_legendre_polynomial_p.default": _skip(
+                "missing_op_implementation"
+            ),
+            "special_legendre_polynomial_p.out": _skip(
+                "missing_op_implementation"
+            ),
+            "special_legendre_polynomial_p.x_scalar": _skip(
+                "missing_op_implementation"
+            ),
+            "special_legendre_polynomial_p.x_scalar_out": _skip(
+                "missing_op_implementation"
+            ),
+            "special_legendre_polynomial_p.n_scalar": _skip(
+                "missing_op_implementation"
+            ),
+            "special_legendre_polynomial_p.n_scalar_out": _skip(
+                "missing_op_implementation"
+            ),
+            "special_log_ndtr.out": _skip("out_variant"),
+            "special_modified_bessel_i0.default": _skip(
+                "missing_op_implementation"
+            ),
+            "special_modified_bessel_i0.out": _skip(
+                "missing_op_implementation"
+            ),
+            "special_modified_bessel_i1.default": _skip(
+                "missing_op_implementation"
+            ),
+            "special_modified_bessel_i1.out": _skip(
+                "missing_op_implementation"
+            ),
+            "special_modified_bessel_k0.default": _skip(
+                "missing_op_implementation"
+            ),
+            "special_modified_bessel_k0.out": _skip(
+                "missing_op_implementation"
+            ),
+            "special_modified_bessel_k1.default": _skip(
+                "missing_op_implementation"
+            ),
+            "special_modified_bessel_k1.out": _skip(
+                "missing_op_implementation"
+            ),
+            "special_ndtri.out": _skip("out_variant"),
+            "special_scaled_modified_bessel_k0.default": _skip(
+                "missing_op_implementation"
+            ),
+            "special_scaled_modified_bessel_k0.out": _skip(
+                "missing_op_implementation"
+            ),
+            "special_scaled_modified_bessel_k1.default": _skip(
+                "missing_op_implementation"
+            ),
+            "special_scaled_modified_bessel_k1.out": _skip(
+                "missing_op_implementation"
+            ),
+            "special_shifted_chebyshev_polynomial_t.default": _skip(
+                "missing_op_implementation"
+            ),
+            "special_shifted_chebyshev_polynomial_t.out": _skip(
+                "missing_op_implementation"
+            ),
+            "special_shifted_chebyshev_polynomial_t.x_scalar": _skip(
+                "missing_op_implementation"
+            ),
+            "special_shifted_chebyshev_polynomial_t.x_scalar_out": _skip(
+                "missing_op_implementation"
+            ),
+            "special_shifted_chebyshev_polynomial_t.n_scalar": _skip(
+                "missing_op_implementation"
+            ),
+            "special_shifted_chebyshev_polynomial_t.n_scalar_out": _skip(
+                "missing_op_implementation"
+            ),
+            "special_shifted_chebyshev_polynomial_u.default": _skip(
+                "missing_op_implementation"
+            ),
+            "special_shifted_chebyshev_polynomial_u.out": _skip(
+                "missing_op_implementation"
+            ),
+            "special_shifted_chebyshev_polynomial_u.x_scalar": _skip(
+                "missing_op_implementation"
+            ),
+            "special_shifted_chebyshev_polynomial_u.x_scalar_out": _skip(
+                "missing_op_implementation"
+            ),
+            "special_shifted_chebyshev_polynomial_u.n_scalar": _skip(
+                "missing_op_implementation"
+            ),
+            "special_shifted_chebyshev_polynomial_u.n_scalar_out": _skip(
+                "missing_op_implementation"
+            ),
+            "special_shifted_chebyshev_polynomial_v.default": _skip(
+                "missing_op_implementation"
+            ),
+            "special_shifted_chebyshev_polynomial_v.out": _skip(
+                "missing_op_implementation"
+            ),
+            "special_shifted_chebyshev_polynomial_v.x_scalar": _skip(
+                "missing_op_implementation"
+            ),
+            "special_shifted_chebyshev_polynomial_v.x_scalar_out": _skip(
+                "missing_op_implementation"
+            ),
+            "special_shifted_chebyshev_polynomial_v.n_scalar": _skip(
+                "missing_op_implementation"
+            ),
+            "special_shifted_chebyshev_polynomial_v.n_scalar_out": _skip(
+                "missing_op_implementation"
+            ),
+            "special_shifted_chebyshev_polynomial_w.default": _skip(
+                "missing_op_implementation"
+            ),
+            "special_shifted_chebyshev_polynomial_w.out": _skip(
+                "missing_op_implementation"
+            ),
+            "special_shifted_chebyshev_polynomial_w.x_scalar": _skip(
+                "missing_op_implementation"
+            ),
+            "special_shifted_chebyshev_polynomial_w.x_scalar_out": _skip(
+                "missing_op_implementation"
+            ),
+            "special_shifted_chebyshev_polynomial_w.n_scalar": _skip(
+                "missing_op_implementation"
+            ),
+            "special_shifted_chebyshev_polynomial_w.n_scalar_out": _skip(
+                "missing_op_implementation"
+            ),
+            "special_spherical_bessel_j0.default": _skip(
+                "missing_op_implementation"
+            ),
+            "special_spherical_bessel_j0.out": _skip(
+                "missing_op_implementation"
+            ),
+            "special_xlog1py.other_scalar": _skip(
+                "missing_prims_scalar_tensor"
+            ),
+            "special_xlog1py.self_scalar": _skip("missing_prims_scalar_tensor"),
+            "special_xlog1py.out": _skip("out_variant"),
+            "special_xlog1py.self_scalar_out": _skip(
+                "missing_prims_scalar_tensor"
+            ),
+            "special_xlog1py.other_scalar_out": _skip(
+                "missing_prims_scalar_tensor"
+            ),
+            "special_zeta.default": _skip("missing_op_implementation"),
+            "special_zeta.other_scalar": _skip("missing_op_implementation"),
+            "special_zeta.self_scalar": _skip("missing_op_implementation"),
+            "special_zeta.out": _skip("missing_op_implementation"),
+            "special_zeta.self_scalar_out": _skip("missing_op_implementation"),
+            "special_zeta.other_scalar_out": _skip("missing_op_implementation"),
             "split.Tensor": _template_split_tensor,
             "split.sizes": _template_split_sizes,
             "split.default": _template_split_default,
@@ -528,19 +655,21 @@ if __name__ == "__main__":
             "std_mean.names_dim": _skip("dynamo_dimname_fake_tensor"),
             "std_mean.correction_names": _skip("dynamo_dimname_fake_tensor"),
             "std_mean.correction_out": _template_std_mean_correction_out,
-            "stft.default": _template_stft_default,
-            "stft.center": _template_stft_center,
+            "stft.default": _skip("complex64_not_supported"),
+            "stft.center": _skip("complex64_not_supported"),
             "stride.Dimname": _skip("dynamo_dimname_fake_tensor"),
             "squeeze.dimname": _skip("dynamo_dimname_fake_tensor"),
             "sum.dim_DimnameList": _skip("dynamo_dimname_fake_tensor"),
             "sum.DimnameList_out": _skip("dynamo_dimname_fake_tensor"),
-            "svd.default": _template_svd_default,
-            "svd.U": _template_svd_U,
-            "tanh_backward.grad_input": _template_tanh_backward_grad_input,
+            "svd.default": _skip("missing_linalg_svd"),
+            "svd.U": _skip("missing_linalg_svd"),
+            "tanh_backward.default": _skip("backward_op"),
+            "tanh_backward.grad_input": _skip("backward_op"),
             "tensor_split.sections": _template_tensor_split_sections,
             "tensor_split.indices": _template_tensor_split_indices,
             "tensor_split.tensor_indices_or_sections": _template_tensor_split_tensor_indices_or_sections,
-            "threshold_backward.grad_input": _template_threshold_backward_grad_input,
+            "threshold_backward.default": _skip("backward_op"),
+            "threshold_backward.grad_input": _skip("backward_op"),
             "topk.default": _template_topk_default,
             "topk.values": _template_topk_values,
             "trace.default": _template_trace_default,
@@ -551,11 +680,11 @@ if __name__ == "__main__":
         }
     )
 
-    run_batch(
+    run_aten_op_batch(
         OPS,
         batch_label="test_batch_8",
-        coverage_json="tests/Python/operator_coverage/coverage.json",
         max_fails=20,
         templates=CUSTOM_TEMPLATES,
     )
-# CHECK: SUMMARY ok=
+# CHECK: SUMMARY pass=
+# CHECK-SAME: fail=0

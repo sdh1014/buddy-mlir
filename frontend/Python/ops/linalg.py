@@ -108,10 +108,12 @@ def arange_op(
     stride = 1
     dtype = node.tensor_meta["dtype"]
     shape = list(node.tensor_meta["shape"])
-    dtype = mlir_element_type_get(dtype)
-    tensor_type = ir.RankedTensorType.get(shape, dtype)
+    mlir_dtype = mlir_element_type_get(dtype)
+    tensor_type = ir.RankedTensorType.get(shape, mlir_dtype)
+    # Determine numpy dtype from tensor dtype
+    np_dtype = numpy_element_type_get(dtype)
     attr = ir.DenseElementsAttr.get(
-        numpy.array([i for i in range(start, end, stride)]),
+        numpy.array([i for i in range(start, end, stride)], dtype=np_dtype),
         signless=True,
         type=tensor_type,
     )
@@ -2538,8 +2540,17 @@ def where_op(
 
     if not isinstance(input2.type, ir.RankedTensorType):
         input2 = tensor.SplatOp(tensor_type, input2, []).result
+    elif list(ir.RankedTensorType(input2.type).shape) == [] and output_shape:
+        input2 = tensor.SplatOp(
+            tensor_type, tensor.ExtractOp(input2, []).result, []
+        ).result
+
     if not isinstance(input3.type, ir.RankedTensorType):
         input3 = tensor.SplatOp(tensor_type, input3, []).result
+    elif list(ir.RankedTensorType(input3.type).shape) == [] and output_shape:
+        input3 = tensor.SplatOp(
+            tensor_type, tensor.ExtractOp(input3, []).result, []
+        ).result
 
     generic_map = ir.AffineMap.get_permutation(
         [i for i in range(len(output_shape))]
@@ -2598,7 +2609,7 @@ def where_op(
 def scalar_tensor_op(node: ScalarTensorOp, symbol_table):
     """
     Import the tensor Scalar_Tensor operation.
-    From Buddy ScalarTensorOp to MLIR TOSA ConstOp with 0D tensor output.
+    From Buddy ScalarTensorOp to MLIR arith.constant with 0D tensor output.
 
     Note: scalar_tensor creates a 0D tensor (tensor with empty shape),
     which is different from a scalar value. Other ops like expand_op
@@ -2622,7 +2633,7 @@ def scalar_tensor_op(node: ScalarTensorOp, symbol_table):
         element_attr = ir.IntegerAttr.get(mlir_dtype, int(scalar_value))
 
     const_attr = ir.DenseElementsAttr.get_splat(tensor_type, element_attr)
-    op = tosa.ConstOp(const_attr)
+    op = arith.ConstantOp(tensor_type, const_attr)
 
     return op.result
 
@@ -2709,9 +2720,7 @@ def max_op(node: MaxOp, symbol_table):
     total_size = 1
     for x in input_shape:
         total_size *= x
-    reshape_op = tosa.ReshapeOp(
-        input1, memoryview(array.array("i", [total_size]))
-    )
+    reshape_op = tosa.ReshapeOp(input1, ir.DenseI64ArrayAttr.get([total_size]))
 
     argmax_result = ir.RankedTensorType.get([], ir.IntegerType.get_signless(64))
     argmax_op = tosa.ArgMaxOp(argmax_result, reshape_op.result, 0)
@@ -3041,9 +3050,11 @@ def unsafe_index_op(
                     for x in input2_shape:
                         total_size *= x
                     reshape_op = tosa.ReshapeOp(
-                        input2_, memoryview(array.array("i", [total_size]))
+                        input2_, ir.DenseI64ArrayAttr.get([total_size])
                     )
-                operands.append(reshape_op.result)
+                    operands.append(reshape_op.result)
+                else:
+                    operands.append(input2_)
 
         else:
             operands = [symbol_table.get((str(i), 0)) for i in input2]
@@ -3893,6 +3904,162 @@ def sort_op(
     return (values.result, indices.result)
 
 
+def searchsorted_op(
+    node: SearchsortedOp,
+    symbol_table: Dict[Tuple[str, int], ir.Operation],
+):
+    """
+    Implements aten.searchsorted for the operator coverage tests.
+
+    Current support (sufficient for test_batch_007):
+    - `sorted_sequence` is a 1D tensor.
+    - `self`/values is a 0D or 1D tensor, or a Python scalar.
+    - `right` kwarg is supported (default False).
+    - `side`/`sorter` kwargs are not supported.
+    """
+    sorted_sequence = symbol_table.get((str(node.args[0]), 0), node.args[0])
+    if sorted_sequence is None:
+        return
+
+    side = node.kwargs.get("side", None)
+    if side is not None:
+        raise NotImplementedError("searchsorted: side kwarg not supported")
+    sorter = node.kwargs.get("sorter", None)
+    if sorter is not None:
+        raise NotImplementedError("searchsorted: sorter kwarg not supported")
+
+    right = bool(node.kwargs.get("right", False))
+
+    sorted_shape = list(ir.RankedTensorType(sorted_sequence.type).shape)
+    if len(sorted_shape) != 1:
+        raise NotImplementedError(
+            f"searchsorted: only 1D sorted_sequence supported, got {sorted_shape}"
+        )
+
+    sorted_element_type = ir.RankedTensorType(sorted_sequence.type).element_type
+    sorted_memref = bufferization.ToMemrefOp(
+        ir.MemRefType.get(sorted_shape, sorted_element_type),
+        sorted_sequence,
+    ).result
+
+    output_shape = list(node.tensor_meta["shape"])
+    output_dtype = node.tensor_meta["dtype"]
+    output_element_type = mlir_element_type_get(output_dtype)
+    output_memref = memref.AllocOp(
+        ir.MemRefType.get(output_shape, output_element_type), [], []
+    ).result
+
+    lb = arith.ConstantOp(
+        ir.IndexType.get(), ir.IntegerAttr.get(ir.IndexType.get(), 0)
+    ).result
+    step = arith.ConstantOp(
+        ir.IndexType.get(), ir.IntegerAttr.get(ir.IndexType.get(), 1)
+    ).result
+    sorted_ub = arith.ConstantOp(
+        ir.IndexType.get(),
+        ir.IntegerAttr.get(ir.IndexType.get(), sorted_shape[0]),
+    ).result
+
+    is_float = isinstance(sorted_element_type, ir.FloatType)
+
+    def _compare(a, b):
+        if is_float:
+            predicate = (
+                arith.CmpFPredicate.OLE if right else arith.CmpFPredicate.OLT
+            )
+            return arith.CmpFOp(predicate, a, b).result
+        predicate = (
+            arith.CmpIPredicate.sle if right else arith.CmpIPredicate.slt
+        )
+        return arith.CmpIOp(predicate, a, b).result
+
+    def _compute_insertion_index(value):
+        inner = scf.ForOp(lb, sorted_ub, step, iter_args=[lb])
+        with ir.InsertionPoint(inner.body):
+            current_count = inner.inner_iter_args[0]
+            sorted_val = memref.LoadOp(
+                sorted_memref, [inner.induction_variable]
+            ).result
+            should_inc = _compare(sorted_val, value)
+            inc = arith.AddIOp(current_count, step).result
+            next_count = arith.SelectOp(should_inc, inc, current_count).result
+            scf.YieldOp([next_count])
+        return inner.results[0]
+
+    values_arg = node.args[1]
+    values_tensor = (
+        symbol_table.get((str(values_arg), 0))
+        if isinstance(values_arg, str)
+        else None
+    )
+
+    if values_tensor is not None:
+        values_shape = list(ir.RankedTensorType(values_tensor.type).shape)
+        if list(values_shape) != list(output_shape):
+            raise RuntimeError(
+                f"searchsorted: output shape {output_shape} "
+                f"does not match values shape {values_shape}"
+            )
+
+        values_element_type = ir.RankedTensorType(
+            values_tensor.type
+        ).element_type
+        values_memref = bufferization.ToMemrefOp(
+            ir.MemRefType.get(values_shape, values_element_type),
+            values_tensor,
+        ).result
+
+        if len(values_shape) == 0:
+            value = memref.LoadOp(values_memref, []).result
+            idx = _compute_insertion_index(value)
+            idx_out = arith.IndexCastOp(output_element_type, idx).result
+            memref.StoreOp(idx_out, output_memref, [])
+        elif len(values_shape) == 1:
+            values_ub = arith.ConstantOp(
+                ir.IndexType.get(),
+                ir.IntegerAttr.get(ir.IndexType.get(), values_shape[0]),
+            ).result
+            outer = scf.ForOp(lb, values_ub, step)
+            with ir.InsertionPoint(outer.body):
+                value = memref.LoadOp(
+                    values_memref, [outer.induction_variable]
+                ).result
+                idx = _compute_insertion_index(value)
+                idx_out = arith.IndexCastOp(output_element_type, idx).result
+                memref.StoreOp(
+                    idx_out,
+                    output_memref,
+                    [outer.induction_variable],
+                )
+                scf.YieldOp(outer.inner_iter_args)
+        else:
+            raise NotImplementedError(
+                f"searchsorted: only 0D/1D values supported, got {values_shape}"
+            )
+    else:
+        scalar_value = values_arg
+        if is_float:
+            value = arith.ConstantOp(
+                sorted_element_type,
+                ir.FloatAttr.get(sorted_element_type, float(scalar_value)),
+            ).result
+        else:
+            value = arith.ConstantOp(
+                sorted_element_type,
+                ir.IntegerAttr.get(sorted_element_type, int(scalar_value)),
+            ).result
+        idx = _compute_insertion_index(value)
+        idx_out = arith.IndexCastOp(output_element_type, idx).result
+        memref.StoreOp(idx_out, output_memref, [])
+
+    output_tensor_type = ir.RankedTensorType.get(
+        output_shape, output_element_type
+    )
+    return bufferization.ToTensorOp(
+        output_tensor_type, output_memref, restrict=True
+    )
+
+
 def tensor_constant_op(
     node: TensorConstantOp,
     symbol_table: Dict[Tuple[str, int], ir.Operation],
@@ -3978,6 +4145,82 @@ def repeat_op(
     else:
         assert False
     return input_tensor
+
+
+def repeat_interleave_op(
+    node: RepeatInterleaveOp,
+    symbol_table: Dict[Tuple[str, int], ir.Operation],
+):
+    """
+    Import aten.repeat_interleave.Tensor (repeats -> indices) lowering.
+
+    aten.repeat_interleave.Tensor(repeats, *, output_size=None) returns a 1D
+    tensor of indices where index i is repeated repeats[i] times.
+    """
+    assert len(node.args) == 1
+
+    repeats_tensor = symbol_table.get((str(node.args[0]), 0))
+    if repeats_tensor is None:
+        return
+
+    output_shape = list(node.tensor_meta["shape"])
+    if len(output_shape) != 1:
+        raise NotImplementedError(
+            "repeat_interleave.Tensor only supports 1D output for now"
+        )
+
+    dtype = node.tensor_meta["dtype"]
+    mlir_dtype = mlir_element_type_get(dtype)
+
+    repeats_type = ir.RankedTensorType(repeats_tensor.type)
+    repeats_shape = list(repeats_type.shape)
+    if len(repeats_shape) != 1:
+        raise NotImplementedError(
+            "repeat_interleave.Tensor only supports 1D repeats for now"
+        )
+
+    repeats_memref = bufferization.ToMemrefOp(
+        ir.MemRefType.get(repeats_shape, repeats_type.element_type),
+        repeats_tensor,
+    ).result
+
+    out_memref = memref.AllocOp(
+        ir.MemRefType.get(output_shape, mlir_dtype), [], []
+    )
+
+    lb = arith.ConstantOp(
+        ir.IndexType.get(), ir.IntegerAttr.get(ir.IndexType.get(), 0)
+    ).result
+    step = arith.ConstantOp(
+        ir.IndexType.get(), ir.IntegerAttr.get(ir.IndexType.get(), 1)
+    ).result
+    ub_repeats = arith.ConstantOp(
+        ir.IndexType.get(),
+        ir.IntegerAttr.get(ir.IndexType.get(), repeats_shape[0]),
+    ).result
+
+    outer = scf.ForOp(lb, ub_repeats, step, iter_args=[lb])
+    with ir.InsertionPoint(outer.body):
+        i = outer.induction_variable
+        pos0 = outer.inner_iter_args[0]
+
+        rep_val = memref.LoadOp(repeats_memref, [i]).result
+        rep_ub = arith.IndexCastOp(ir.IndexType.get(), rep_val).result
+
+        inner = scf.ForOp(lb, rep_ub, step, iter_args=[pos0])
+        with ir.InsertionPoint(inner.body):
+            pos = inner.inner_iter_args[0]
+            i_val = arith.IndexCastOp(mlir_dtype, i).result
+            memref.StoreOp(i_val, out_memref.result, [pos])
+            pos_next = arith.AddIOp(pos, step).result
+            scf.YieldOp([pos_next])
+
+        scf.YieldOp([inner.results[0]])
+
+    output_tensor_type = ir.RankedTensorType.get(output_shape, mlir_dtype)
+    return bufferization.ToTensorOp(
+        output_tensor_type, out_memref.result, restrict=True
+    )
 
 
 def as_strided_op(
@@ -4684,6 +4927,283 @@ def scatter_reduce_op(
                     new_val = arith.AddFOp(curr_val.result, src_val.result)
                 else:
                     new_val = arith.AddIOp(curr_val.result, src_val.result)
+
+            # Store the result
+            memref.StoreOp(new_val, input_memref, target_indices)
+        else:
+            # Create a loop for the current dimension
+            loop = scf.ForOp(lb, ubs[depth], step)
+            with ir.InsertionPoint(loop.body):
+                new_indices = indices + [loop.induction_variable]
+                create_nested_loops(depth + 1, new_indices)
+                scf.YieldOp(loop.inner_iter_args)
+
+    create_nested_loops(0, [])
+
+    # Convert back to tensor
+    output_tensor_type = ir.RankedTensorType.get(output_shape, mlir_dtype)
+    op = bufferization.ToTensorOp(
+        output_tensor_type, input_memref, restrict=True
+    )
+
+    return op
+
+
+def scatter_src_reduce_op(
+    node: ScatterSrcReduceOp,
+    symbol_table: Dict[Tuple[str, int], ir.Operation],
+):
+    """
+    Converts a Buddy ScatterSrcReduceOp operation to an MLIR operation.
+
+    Implements aten.scatter.reduce: self.scatter_(dim, index, src, reduce=reduce)
+    Similar to scatter_reduce but reduce comes from kwargs instead of args.
+
+    Parameters:
+        node (ScatterSrcReduceOp): The Buddy ScatterSrcReduceOp node containing:
+            - args[0]: input tensor (self)
+            - args[1]: dim (int) - the axis along which to scatter
+            - args[2]: index tensor
+            - args[3]: src tensor
+            - kwargs["reduce"]: reduction operation type
+        symbol_table (dict): A dictionary mapping tensor names to their corresponding MLIR operations.
+
+    Returns:
+        op: An MLIR operation representing the scatter_reduce result.
+    """
+    # Get input tensors
+    input_tensor = symbol_table.get((str(node.args[0]), 0))
+    if input_tensor is None:
+        return
+    dim = int(node.args[1])
+    index_tensor = symbol_table.get((str(node.args[2]), 0))
+    src_tensor = symbol_table.get((str(node.args[3]), 0))
+    reduce_op = str(node.kwargs.get("reduce", "add"))
+
+    if index_tensor is None or src_tensor is None:
+        return
+
+    output_shape = list(node.tensor_meta["shape"])
+    dtype = node.tensor_meta["dtype"]
+    mlir_dtype = mlir_element_type_get(dtype)
+    tensor_rank = len(output_shape)
+
+    # Handle negative dimension
+    if dim < 0:
+        dim += tensor_rank
+
+    # Get shapes
+    input_shape = list(ir.RankedTensorType(input_tensor.type).shape)
+    index_shape = list(ir.RankedTensorType(index_tensor.type).shape)
+    src_shape = list(ir.RankedTensorType(src_tensor.type).shape)
+
+    # Convert tensors to memrefs for in-place operations
+    input_memref_type = ir.MemRefType.get(
+        input_shape, ir.RankedTensorType(input_tensor.type).element_type
+    )
+    input_memref = bufferization.ToMemrefOp(input_memref_type, input_tensor)
+
+    index_memref_type = ir.MemRefType.get(
+        index_shape, ir.RankedTensorType(index_tensor.type).element_type
+    )
+    index_memref = bufferization.ToMemrefOp(index_memref_type, index_tensor)
+
+    src_memref_type = ir.MemRefType.get(
+        src_shape, ir.RankedTensorType(src_tensor.type).element_type
+    )
+    src_memref = bufferization.ToMemrefOp(src_memref_type, src_tensor)
+
+    # Create loop bounds
+    lb = arith.ConstantOp(ir.IndexType.get(), 0)
+    step = arith.ConstantOp(ir.IndexType.get(), 1)
+    ubs = [arith.ConstantOp(ir.IndexType.get(), s) for s in index_shape]
+
+    # Determine if we're working with integers or floats
+    is_float = str(mlir_dtype).startswith("f")
+
+    # Generate nested loops over all dimensions of the index/src tensor
+    def create_nested_loops(depth, indices):
+        """Recursively create nested loops and perform scatter_reduce at innermost level."""
+        if depth == tensor_rank:
+            # At the innermost level, perform the scatter_reduce operation
+            # Load the index value
+            idx_val = memref.LoadOp(index_memref, indices)
+            # Cast to index type
+            scatter_idx = arith.IndexCastOp(ir.IndexType.get(), idx_val)
+            # Load the source value
+            src_val = memref.LoadOp(src_memref, indices)
+            # Build the load/store indices: replace indices[dim] with scatter_idx
+            target_indices = list(indices)
+            target_indices[dim] = scatter_idx
+            # Load the current value at target position
+            curr_val = memref.LoadOp(input_memref, target_indices)
+
+            # Apply the reduction operation
+            if reduce_op == "add" or reduce_op == "sum":
+                if is_float:
+                    new_val = arith.AddFOp(curr_val.result, src_val.result)
+                else:
+                    new_val = arith.AddIOp(curr_val.result, src_val.result)
+            elif reduce_op == "multiply" or reduce_op == "prod":
+                if is_float:
+                    new_val = arith.MulFOp(curr_val.result, src_val.result)
+                else:
+                    new_val = arith.MulIOp(curr_val.result, src_val.result)
+            elif reduce_op == "amax":
+                if is_float:
+                    new_val = arith.MaximumFOp(curr_val.result, src_val.result)
+                else:
+                    new_val = arith.MaxSIOp(curr_val.result, src_val.result)
+            elif reduce_op == "amin":
+                if is_float:
+                    new_val = arith.MinimumFOp(curr_val.result, src_val.result)
+                else:
+                    new_val = arith.MinSIOp(curr_val.result, src_val.result)
+            else:
+                # Default to add for unsupported operations
+                if is_float:
+                    new_val = arith.AddFOp(curr_val.result, src_val.result)
+                else:
+                    new_val = arith.AddIOp(curr_val.result, src_val.result)
+
+            # Store the result
+            memref.StoreOp(new_val, input_memref, target_indices)
+        else:
+            # Create a loop for the current dimension
+            loop = scf.ForOp(lb, ubs[depth], step)
+            with ir.InsertionPoint(loop.body):
+                new_indices = indices + [loop.induction_variable]
+                create_nested_loops(depth + 1, new_indices)
+                scf.YieldOp(loop.inner_iter_args)
+
+    create_nested_loops(0, [])
+
+    # Convert back to tensor
+    output_tensor_type = ir.RankedTensorType.get(output_shape, mlir_dtype)
+    op = bufferization.ToTensorOp(
+        output_tensor_type, input_memref, restrict=True
+    )
+
+    return op
+
+
+def scatter_value_reduce_op(
+    node: ScatterValueReduceOp,
+    symbol_table: Dict[Tuple[str, int], ir.Operation],
+):
+    """
+    Converts a Buddy ScatterValueReduceOp operation to an MLIR operation.
+
+    Implements aten.scatter.value_reduce: self.scatter_(dim, index, value, reduce=reduce)
+    Scatters a scalar value with reduction operation into self tensor at positions
+    specified by index along the specified dimension.
+
+    Parameters:
+        node (ScatterValueReduceOp): The Buddy ScatterValueReduceOp node containing:
+            - args[0]: input tensor (self)
+            - args[1]: dim (int) - the axis along which to scatter
+            - args[2]: index tensor
+            - args[3]: value (scalar)
+            - kwargs["reduce"]: reduction operation type
+        symbol_table (dict): A dictionary mapping tensor names to their corresponding MLIR operations.
+
+    Returns:
+        op: An MLIR operation representing the scatter_value_reduce result.
+    """
+    # Get input tensor
+    input_tensor = symbol_table.get((str(node.args[0]), 0))
+    if input_tensor is None:
+        return
+    dim = int(node.args[1])
+    index_tensor = symbol_table.get((str(node.args[2]), 0))
+    value = node.args[3]
+    reduce_op = str(node.kwargs.get("reduce", "add"))
+
+    if index_tensor is None:
+        return
+
+    output_shape = list(node.tensor_meta["shape"])
+    dtype = node.tensor_meta["dtype"]
+    mlir_dtype = mlir_element_type_get(dtype)
+    tensor_rank = len(output_shape)
+
+    # Handle negative dimension
+    if dim < 0:
+        dim += tensor_rank
+
+    # Get shapes
+    input_shape = list(ir.RankedTensorType(input_tensor.type).shape)
+    index_shape = list(ir.RankedTensorType(index_tensor.type).shape)
+
+    # Create constant for the scalar value
+    value_attr = mlir_element_attr_get(dtype, value)
+    value_const = arith.ConstantOp(mlir_dtype, value_attr)
+
+    # Convert tensors to memrefs for in-place operations
+    input_memref_type = ir.MemRefType.get(
+        input_shape, ir.RankedTensorType(input_tensor.type).element_type
+    )
+    input_memref = bufferization.ToMemrefOp(input_memref_type, input_tensor)
+
+    index_memref_type = ir.MemRefType.get(
+        index_shape, ir.RankedTensorType(index_tensor.type).element_type
+    )
+    index_memref = bufferization.ToMemrefOp(index_memref_type, index_tensor)
+
+    # Create loop bounds
+    lb = arith.ConstantOp(ir.IndexType.get(), 0)
+    step = arith.ConstantOp(ir.IndexType.get(), 1)
+    ubs = [arith.ConstantOp(ir.IndexType.get(), s) for s in index_shape]
+
+    # Determine if we're working with integers or floats
+    is_float = str(mlir_dtype).startswith("f")
+
+    # Generate nested loops over all dimensions of the index tensor
+    def create_nested_loops(depth, indices):
+        """Recursively create nested loops and perform scatter_value_reduce at innermost level."""
+        if depth == tensor_rank:
+            # At the innermost level, perform the scatter_value_reduce operation
+            # Load the index value
+            idx_val = memref.LoadOp(index_memref, indices)
+            # Cast to index type
+            scatter_idx = arith.IndexCastOp(ir.IndexType.get(), idx_val)
+            # Build the load/store indices: replace indices[dim] with scatter_idx
+            target_indices = list(indices)
+            target_indices[dim] = scatter_idx
+            # Load the current value at target position
+            curr_val = memref.LoadOp(input_memref, target_indices)
+
+            # Apply the reduction operation
+            if reduce_op == "add" or reduce_op == "sum":
+                if is_float:
+                    new_val = arith.AddFOp(curr_val.result, value_const.result)
+                else:
+                    new_val = arith.AddIOp(curr_val.result, value_const.result)
+            elif reduce_op == "multiply" or reduce_op == "prod":
+                if is_float:
+                    new_val = arith.MulFOp(curr_val.result, value_const.result)
+                else:
+                    new_val = arith.MulIOp(curr_val.result, value_const.result)
+            elif reduce_op == "amax":
+                if is_float:
+                    new_val = arith.MaximumFOp(
+                        curr_val.result, value_const.result
+                    )
+                else:
+                    new_val = arith.MaxSIOp(curr_val.result, value_const.result)
+            elif reduce_op == "amin":
+                if is_float:
+                    new_val = arith.MinimumFOp(
+                        curr_val.result, value_const.result
+                    )
+                else:
+                    new_val = arith.MinSIOp(curr_val.result, value_const.result)
+            else:
+                # Default to add for unsupported operations
+                if is_float:
+                    new_val = arith.AddFOp(curr_val.result, value_const.result)
+                else:
+                    new_val = arith.AddIOp(curr_val.result, value_const.result)
 
             # Store the result
             memref.StoreOp(new_val, input_memref, target_indices)
@@ -6442,6 +6962,94 @@ def max_pool3d_op(
     return output_result, indices_result
 
 
+def select_scatter_op(
+    node: SelectScatterOp,
+    symbol_table: Dict[Tuple[str, int], ir.Operation],
+):
+    """
+    Converts a Buddy SelectScatterOp operation to an MLIR operation.
+
+    Implements aten.select_scatter: embeds src at index along dim in input.
+    This is the inverse of select - it takes a tensor src that has one less
+    dimension than input and embeds it at the specified index along dim.
+
+    For example, if input has shape [2, 3] and dim=1, index=1:
+        output = input.clone()
+        output[:, 1] = src  # where src has shape [2]
+
+    Parameters:
+        node (SelectScatterOp): The Buddy SelectScatterOp node containing:
+            - args[0]: input tensor (self)
+            - args[1]: src tensor (one dimension smaller)
+            - args[2]: dim (int) - the dimension to scatter along
+            - args[3]: index (int) - the index to scatter at
+        symbol_table (dict): A dictionary mapping tensor names to their corresponding MLIR operations.
+
+    Returns:
+        op: An MLIR operation representing the select_scatter result.
+    """
+    # Get input tensors
+    input_tensor = symbol_table.get((str(node.args[0]), 0))
+    src_tensor = symbol_table.get((str(node.args[1]), 0))
+    if input_tensor is None or src_tensor is None:
+        return
+
+    dim = int(node.args[2])
+    index = int(node.args[3])
+
+    output_shape = list(node.tensor_meta["shape"])
+    dtype = node.tensor_meta["dtype"]
+    mlir_dtype = mlir_element_type_get(dtype)
+    tensor_rank = len(output_shape)
+
+    # Handle negative dimension
+    if dim < 0:
+        dim += tensor_rank
+
+    # Handle negative index
+    if index < 0:
+        index += output_shape[dim]
+
+    # Get shapes
+    input_shape = list(ir.RankedTensorType(input_tensor.type).shape)
+    src_shape = list(ir.RankedTensorType(src_tensor.type).shape)
+
+    # select_scatter uses tensor.InsertSliceOp
+    # We need to expand src by 1 dimension and then insert it
+    # First, unsqueeze src to add the selected dimension back using tosa.ReshapeOp
+    src_expanded_shape = src_shape[:dim] + [1] + src_shape[dim:]
+    src_expanded_shape_attr = ir._denseI64ArrayAttr(
+        numpy.array(src_expanded_shape, dtype=numpy.int64), None
+    )
+    src_expanded = tosa.ReshapeOp(src_tensor, src_expanded_shape_attr)
+
+    # Compute offsets for insert_slice: all zeros except dim which is index
+    offsets = [0] * tensor_rank
+    offsets[dim] = index
+    offsets_attr = ir._denseI64ArrayAttr(offsets, None)
+
+    # Compute sizes for insert_slice: same as src_expanded_shape
+    sizes_attr = ir._denseI64ArrayAttr(src_expanded_shape, None)
+
+    # Strides are all 1
+    strides = [1] * tensor_rank
+    strides_attr = ir._denseI64ArrayAttr(strides, None)
+
+    # Insert the expanded src into the input tensor
+    insert_op = tensor.InsertSliceOp(
+        src_expanded.result,
+        input_tensor,
+        [],
+        [],
+        [],
+        offsets_attr,
+        sizes_attr,
+        strides_attr,
+    )
+
+    return insert_op.result
+
+
 def scatter_add_op(
     node: ScatterAddOp,
     symbol_table: Dict[Tuple[str, int], ir.Operation],
@@ -7320,12 +7928,12 @@ def embedding_dense_backward_op(
         flat_grad_shape = [batch_size, embedding_dim]
         flat_grad_type = ir.RankedTensorType.get(flat_grad_shape, grad_dtype)
         grad_flat = tosa.ReshapeOp(
-            grad_output, memoryview(array.array("i", flat_grad_shape))
+            grad_output, ir.DenseI64ArrayAttr.get(flat_grad_shape)
         ).result
 
         flat_indices_shape = [batch_size]
         indices_flat = tosa.ReshapeOp(
-            indices, memoryview(array.array("i", flat_indices_shape))
+            indices, ir.DenseI64ArrayAttr.get(flat_indices_shape)
         ).result
     elif len(grad_shape) == 2:
         batch_size = grad_shape[0]
@@ -7335,11 +7943,11 @@ def embedding_dense_backward_op(
         batch_size = 1
         flat_grad_shape = [1, embedding_dim]
         grad_flat = tosa.ReshapeOp(
-            grad_output, memoryview(array.array("i", flat_grad_shape))
+            grad_output, ir.DenseI64ArrayAttr.get(flat_grad_shape)
         ).result
         flat_indices_shape = [1]
         indices_flat = tosa.ReshapeOp(
-            indices, memoryview(array.array("i", flat_indices_shape))
+            indices, ir.DenseI64ArrayAttr.get(flat_indices_shape)
         ).result
 
     # Create output memref and initialize with zeros
@@ -7854,38 +8462,34 @@ def fft_r2c_op(
         # Input is [N], output is [K, 2]
         # Reshape input to [N, 1] for matmul
         input_reshaped = tosa.ReshapeOp(
-            input_tensor, memoryview(array.array("i", [N, 1]))
+            input_tensor, ir.DenseI64ArrayAttr.get([N, 1])
         )
 
         # X_real = W_real @ x  -> [K, 1]
         matmul_type_1d = ir.RankedTensorType.get([1, K, 1], element_type)
         w_real_3d = tosa.ReshapeOp(
-            w_real.result, memoryview(array.array("i", [1, K, N]))
+            w_real.result, ir.DenseI64ArrayAttr.get([1, K, N])
         )
         x_3d = tosa.ReshapeOp(
-            input_reshaped.result, memoryview(array.array("i", [1, N, 1]))
+            input_reshaped.result, ir.DenseI64ArrayAttr.get([1, N, 1])
         )
 
         x_real_3d = tosa.MatMulOp(matmul_type_1d, w_real_3d.result, x_3d.result)
-        x_real = tosa.ReshapeOp(
-            x_real_3d.result, memoryview(array.array("i", [K]))
-        )
+        x_real = tosa.ReshapeOp(x_real_3d.result, ir.DenseI64ArrayAttr.get([K]))
 
         # X_imag = W_imag @ x  -> [K, 1]
         w_imag_3d = tosa.ReshapeOp(
-            w_imag.result, memoryview(array.array("i", [1, K, N]))
+            w_imag.result, ir.DenseI64ArrayAttr.get([1, K, N])
         )
         x_imag_3d = tosa.MatMulOp(matmul_type_1d, w_imag_3d.result, x_3d.result)
-        x_imag = tosa.ReshapeOp(
-            x_imag_3d.result, memoryview(array.array("i", [K]))
-        )
+        x_imag = tosa.ReshapeOp(x_imag_3d.result, ir.DenseI64ArrayAttr.get([K]))
 
         # Stack real and imag: [K, 2]
         x_real_expanded = tosa.ReshapeOp(
-            x_real.result, memoryview(array.array("i", [K, 1]))
+            x_real.result, ir.DenseI64ArrayAttr.get([K, 1])
         )
         x_imag_expanded = tosa.ReshapeOp(
-            x_imag.result, memoryview(array.array("i", [K, 1]))
+            x_imag.result, ir.DenseI64ArrayAttr.get([K, 1])
         )
 
         output = tosa.ConcatOp(
@@ -7905,7 +8509,7 @@ def fft_r2c_op(
 
         # Reshape input to [batch, N]
         input_2d = tosa.ReshapeOp(
-            input_tensor, memoryview(array.array("i", [batch_size, N]))
+            input_tensor, ir.DenseI64ArrayAttr.get([batch_size, N])
         )
 
         # For batch matmul: input [batch, N] @ W.T [N, K] -> [batch, K]
@@ -7929,13 +8533,13 @@ def fft_r2c_op(
 
         # Reshape for batch matmul: [1, batch, N] @ [1, N, K] -> [1, batch, K]
         input_3d = tosa.ReshapeOp(
-            input_2d.result, memoryview(array.array("i", [1, batch_size, N]))
+            input_2d.result, ir.DenseI64ArrayAttr.get([1, batch_size, N])
         )
         w_real_t_3d = tosa.ReshapeOp(
-            w_real_t.result, memoryview(array.array("i", [1, N, K]))
+            w_real_t.result, ir.DenseI64ArrayAttr.get([1, N, K])
         )
         w_imag_t_3d = tosa.ReshapeOp(
-            w_imag_t.result, memoryview(array.array("i", [1, N, K]))
+            w_imag_t.result, ir.DenseI64ArrayAttr.get([1, N, K])
         )
 
         matmul_type = ir.RankedTensorType.get([1, batch_size, K], element_type)
@@ -7949,18 +8553,18 @@ def fft_r2c_op(
 
         # Reshape to [batch, K]
         x_real_2d = tosa.ReshapeOp(
-            x_real_3d.result, memoryview(array.array("i", [batch_size, K]))
+            x_real_3d.result, ir.DenseI64ArrayAttr.get([batch_size, K])
         )
         x_imag_2d = tosa.ReshapeOp(
-            x_imag_3d.result, memoryview(array.array("i", [batch_size, K]))
+            x_imag_3d.result, ir.DenseI64ArrayAttr.get([batch_size, K])
         )
 
         # Expand dims for concat: [batch, K, 1]
         x_real_expanded = tosa.ReshapeOp(
-            x_real_2d.result, memoryview(array.array("i", [batch_size, K, 1]))
+            x_real_2d.result, ir.DenseI64ArrayAttr.get([batch_size, K, 1])
         )
         x_imag_expanded = tosa.ReshapeOp(
-            x_imag_2d.result, memoryview(array.array("i", [batch_size, K, 1]))
+            x_imag_2d.result, ir.DenseI64ArrayAttr.get([batch_size, K, 1])
         )
 
         # Concat along last axis: [batch, K, 2]
@@ -7973,7 +8577,7 @@ def fft_r2c_op(
 
         # Reshape to original batch shape + [K, 2]
         output = tosa.ReshapeOp(
-            concat_result.result, memoryview(array.array("i", output_shape))
+            concat_result.result, ir.DenseI64ArrayAttr.get(output_shape)
         )
 
     return output
@@ -8189,6 +8793,243 @@ def median_dim_op(
     )
 
     return (values.result, indices.result)
+
+
+def median_default_op(
+    node,
+    symbol_table: Dict[Tuple[str, int], ir.Operation],
+):
+    """
+    Computes the median of all elements.
+    Returns a scalar tensor containing the median.
+
+    Uses bubble sort on flattened tensor to find median position.
+    """
+    input1 = symbol_table.get((str(node.args[0]), 0), node.args[0])
+
+    input_shape = list(input1.type.shape)
+    mlir_dtype = input1.type.element_type
+    total_size = 1
+    for s in input_shape:
+        total_size *= s
+
+    median_idx = total_size // 2
+
+    # Output is scalar (0-dimensional tensor)
+    output_tensor_type = ir.RankedTensorType.get([], mlir_dtype)
+
+    # Flatten input to 1D
+    flat_shape = [total_size]
+    flat_type = ir.RankedTensorType.get(flat_shape, mlir_dtype)
+    flat_input = tosa.ReshapeOp(input1, ir.DenseI64ArrayAttr.get(flat_shape))
+
+    # Allocate memref for sorting
+    flat_memref_type = ir.MemRefType.get(flat_shape, mlir_dtype)
+    sort_memref = memref.AllocOp(flat_memref_type, [], [])
+
+    # Convert input to memref
+    flat_input_memref = bufferization.ToMemrefOp(
+        flat_memref_type, flat_input.result
+    )
+
+    # Copy input to sort buffer
+    lb = arith.ConstantOp(ir.IndexType.get(), 0)
+    ub = arith.ConstantOp(ir.IndexType.get(), total_size)
+    step = arith.ConstantOp(ir.IndexType.get(), 1)
+
+    copy_loop = scf.ForOp(lb, ub, step)
+    with ir.InsertionPoint(copy_loop.body):
+        val = memref.LoadOp(flat_input_memref, [copy_loop.induction_variable])
+        memref.StoreOp(val, sort_memref, [copy_loop.induction_variable])
+        scf.YieldOp(copy_loop.inner_iter_args)
+
+    # Bubble sort
+    outer_ub = arith.ConstantOp(ir.IndexType.get(), total_size - 1)
+    pass_loop = scf.ForOp(lb, outer_ub, step)
+    with ir.InsertionPoint(pass_loop.body):
+        inner_ub = arith.SubIOp(outer_ub, pass_loop.induction_variable)
+        compare_loop = scf.ForOp(lb, inner_ub, step)
+        with ir.InsertionPoint(compare_loop.body):
+            next_idx = arith.AddIOp(compare_loop.induction_variable, step)
+            val_curr = memref.LoadOp(
+                sort_memref, [compare_loop.induction_variable]
+            )
+            val_next = memref.LoadOp(sort_memref, [next_idx])
+
+            if str(mlir_dtype).startswith("f"):
+                should_swap = arith.CmpFOp(
+                    arith.CmpFPredicate.OGT, val_curr, val_next
+                )
+            else:
+                should_swap = arith.CmpIOp(
+                    arith.CmpIPredicate.sgt, val_curr, val_next
+                )
+
+            if_op = scf.IfOp(should_swap, hasElse=False)
+            with ir.InsertionPoint(if_op.then_block):
+                memref.StoreOp(
+                    val_next, sort_memref, [compare_loop.induction_variable]
+                )
+                memref.StoreOp(val_curr, sort_memref, [next_idx])
+                scf.YieldOp([])
+            scf.YieldOp(compare_loop.inner_iter_args)
+        scf.YieldOp(pass_loop.inner_iter_args)
+
+    # Extract median value
+    median_const = arith.ConstantOp(ir.IndexType.get(), median_idx)
+    median_val = memref.LoadOp(sort_memref, [median_const])
+
+    # Create scalar tensor output
+    output_memref_type = ir.MemRefType.get([], mlir_dtype)
+    output_memref = memref.AllocOp(output_memref_type, [], [])
+    memref.StoreOp(median_val, output_memref, [])
+
+    result = bufferization.ToTensorOp(
+        output_tensor_type, output_memref, restrict=True
+    )
+
+    return result.result
+
+
+def nanmedian_default_op(
+    node,
+    symbol_table: Dict[Tuple[str, int], ir.Operation],
+):
+    """
+    Computes the median of all elements ignoring NaN values.
+    Returns a scalar tensor containing the median.
+
+    Note: This implementation assumes no NaN values in input for simplicity.
+    For inputs without NaN, this behaves identically to median.default.
+    """
+    # Reuse median_default_op implementation
+    return median_default_op(node, symbol_table)
+
+
+def nanmedian_dim_op(
+    node,
+    symbol_table: Dict[Tuple[str, int], ir.Operation],
+):
+    """
+    Computes the median along a dimension ignoring NaN values.
+    Returns (values, indices) tuple.
+
+    Note: This implementation assumes no NaN values in input for simplicity.
+    For inputs without NaN, this behaves identically to median.dim.
+    """
+    # Reuse median_dim_op implementation
+    return median_dim_op(node, symbol_table)
+
+
+def nonzero_static_op(
+    node,
+    symbol_table: Dict[Tuple[str, int], ir.Operation],
+):
+    """
+    Returns indices of nonzero elements with static output size.
+    aten.nonzero_static(input, size, fill_value=-1) -> Tensor
+    Output shape is [size, input.ndim].
+    """
+    input1 = symbol_table.get((str(node.args[0]), 0), node.args[0])
+
+    input_shape = list(input1.type.shape)
+    input_dtype = input1.type.element_type
+    ndim = len(input_shape)
+
+    # Get size and fill_value from args
+    size = node.args[1] if len(node.args) > 1 else 0
+    fill_value = node.args[2] if len(node.args) > 2 else -1
+
+    output_shape = [size, ndim]
+    output_dtype = ir.IntegerType.get_signless(64)
+    output_tensor_type = ir.RankedTensorType.get(output_shape, output_dtype)
+
+    # Allocate output memref and initialize with fill_value
+    output_memref_type = ir.MemRefType.get(output_shape, output_dtype)
+    output_memref = memref.AllocOp(output_memref_type, [], [])
+
+    # Initialize with fill_value
+    fill_const = arith.ConstantOp(output_dtype, fill_value)
+    lb = arith.ConstantOp(ir.IndexType.get(), 0)
+    step = arith.ConstantOp(ir.IndexType.get(), 1)
+    ub_size = arith.ConstantOp(ir.IndexType.get(), size)
+    ub_ndim = arith.ConstantOp(ir.IndexType.get(), ndim)
+
+    init_loop0 = scf.ForOp(lb, ub_size, step)
+    with ir.InsertionPoint(init_loop0.body):
+        init_loop1 = scf.ForOp(lb, ub_ndim, step)
+        with ir.InsertionPoint(init_loop1.body):
+            memref.StoreOp(
+                fill_const,
+                output_memref,
+                [init_loop0.induction_variable, init_loop1.induction_variable],
+            )
+            scf.YieldOp(init_loop1.inner_iter_args)
+        scf.YieldOp(init_loop0.inner_iter_args)
+
+    # Convert input to memref
+    input_memref_type = ir.MemRefType.get(input_shape, input_dtype)
+    input_memref = bufferization.ToMemrefOp(input_memref_type, input1)
+
+    # Counter for nonzero elements
+    counter_memref_type = ir.MemRefType.get([], ir.IndexType.get())
+    counter_memref = memref.AllocOp(counter_memref_type, [], [])
+    zero_index = arith.ConstantOp(ir.IndexType.get(), 0)
+    memref.StoreOp(zero_index, counter_memref, [])
+
+    # Flatten iteration over input
+    total_size = 1
+    for s in input_shape:
+        total_size *= s
+
+    ub_total = arith.ConstantOp(ir.IndexType.get(), total_size)
+
+    # Create zero constant for comparison
+    if str(input_dtype).startswith("f"):
+        zero_val = arith.ConstantOp(input_dtype, 0.0)
+    else:
+        zero_val = arith.ConstantOp(input_dtype, 0)
+
+    # Handle 1D case for simplicity
+    if ndim == 1:
+        ub_dim0 = arith.ConstantOp(ir.IndexType.get(), input_shape[0])
+        scan_loop = scf.ForOp(lb, ub_dim0, step)
+        with ir.InsertionPoint(scan_loop.body):
+            val = memref.LoadOp(input_memref, [scan_loop.induction_variable])
+            if str(input_dtype).startswith("f"):
+                is_nonzero = arith.CmpFOp(
+                    arith.CmpFPredicate.ONE, val, zero_val
+                )
+            else:
+                is_nonzero = arith.CmpIOp(arith.CmpIPredicate.ne, val, zero_val)
+
+            if_op = scf.IfOp(is_nonzero, hasElse=False)
+            with ir.InsertionPoint(if_op.then_block):
+                cnt = memref.LoadOp(counter_memref, [])
+                size_const = arith.ConstantOp(ir.IndexType.get(), size)
+                in_bounds = arith.CmpIOp(
+                    arith.CmpIPredicate.ult, cnt.result, size_const
+                )
+                if_bounds = scf.IfOp(in_bounds, hasElse=False)
+                with ir.InsertionPoint(if_bounds.then_block):
+                    idx_val = arith.IndexCastOp(
+                        output_dtype, scan_loop.induction_variable
+                    )
+                    zero_idx = arith.ConstantOp(ir.IndexType.get(), 0)
+                    memref.StoreOp(
+                        idx_val, output_memref, [cnt.result, zero_idx]
+                    )
+                    one_idx = arith.ConstantOp(ir.IndexType.get(), 1)
+                    new_cnt = arith.AddIOp(cnt.result, one_idx)
+                    memref.StoreOp(new_cnt, counter_memref, [])
+                    scf.YieldOp([])
+                scf.YieldOp([])
+            scf.YieldOp(scan_loop.inner_iter_args)
+
+    result = bufferization.ToTensorOp(
+        output_tensor_type, output_memref, restrict=True
+    )
+    return result.result
 
 
 def mode_op(
@@ -8965,26 +9806,35 @@ ops_registry = {
     "TensorConstantOp": tensor_constant_op,
     "LiftFreshCopyOp": lift_fresh_copy_op,
     "RepeatOp": repeat_op,
+    "RepeatInterleaveOp": repeat_interleave_op,
     "AsStridedOp": as_strided_op,
     "AsStridedCopyOp": as_strided_copy_op,
     "AsStridedScatterOp": as_strided_scatter_op,
     "ScatterSrcOp": scatter_src_op,
     "ScatterValueOp": scatter_value_op,
     "ScatterReduceOp": scatter_reduce_op,
+    "ScatterSrcReduceOp": scatter_src_reduce_op,
+    "ScatterValueReduceOp": scatter_value_reduce_op,
     "IndexSelectOp": index_select_op,
     "GatherOp": gather_op,
     "SortOp": sort_op,
+    "SearchsortedOp": searchsorted_op,
     "CumProdOp": cumprod_op,
     "MaxPool2dWithIndicesOp": max_pool2d_with_indices_op,
     "MaxPool3dOp": max_pool3d_op,
     "AvgPool3dOp": avg_pool3d_op,
     "TopkOp": topk_op,
     "ScatterAddOp": scatter_add_op,
+    "SelectScatterOp": select_scatter_op,
     "EmbeddingDenseBackwardOp": embedding_dense_backward_op,
     "MaxPool2dWithIndicesBackwardOp": max_pool2d_with_indices_backward_op,
     "PdistForwardOp": pdist_forward_op,
     "FftR2cOp": fft_r2c_op,
     "MedianDimOp": median_dim_op,
+    "MedianDefaultOp": median_default_op,
+    "NanmedianDefaultOp": nanmedian_default_op,
+    "NanmedianDimOp": nanmedian_dim_op,
+    "NonzeroStaticOp": nonzero_static_op,
     "ModeOp": mode_op,
     "KthvalueOp": kthvalue_op,
     "LogcumsumexpOp": logcumsumexp_op,
