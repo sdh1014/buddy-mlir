@@ -1408,14 +1408,15 @@ def _index_op_all_tensors(
     Handle index operation when all indices are tensors (no None values).
     This uses the original implementation with special broadcast pattern handling.
     """
-    # store index operand shapes for later use
+    # Store index operands and shapes for later use.
+    index_tensor_operands = []
     index_shapes = []
-    for i in range(len(input2)):
-        t = symbol_table.get((str(input2[i]), 0))
+    for idx in input2:
+        t = symbol_table.get((str(idx), 0))
         if t is None:
             return
-        s = tuple(t.type.shape)
-        index_shapes.append(s)
+        index_tensor_operands.append(t)
+        index_shapes.append(tuple(t.type.shape))
 
     # Create output tensor and result type
     tensor_type = ir.RankedTensorType.get(output_shape, mlir_dtype)
@@ -1526,9 +1527,6 @@ def _index_op_all_tensors(
                 ir.AffineMapAttr.get(generic_map.get_submap(idx_list))
             )
 
-    # Build operands list
-    operands = [symbol_table.get((str(i), 0)) for i in input2]
-
     # Prepare iterator types (parallel for each iteration dimension)
     iter_count = out_rank
     iterator_attr = ir.ArrayAttr.get(
@@ -1556,7 +1554,7 @@ def _index_op_all_tensors(
     for i in block.arguments[:-1]:
         indexcast_op = arith.IndexCastOp(ir.IndexType.get(), i)
         block.append(indexcast_op)
-        index_tensor_values.append(indexcast_op.result)
+        index.append(indexcast_op.result)
 
     # If we have fewer index tensors than input dimensions, we need to add
     # linalg.index ops for the remaining dimensions

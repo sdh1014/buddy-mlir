@@ -498,6 +498,18 @@ CUSTOM_TEMPLATES.update(
         "bernoulli.Tensor_out": _skip("randop_not_supported"),
         "bernoulli.float_out": _skip("randop_not_supported"),
         "bernoulli_.Tensor": _skip("randop_not_supported"),
+        # Complex types not supported
+        "acos.complex": _skip("complex_not_supported"),
+        "acosh.complex": _skip("complex_not_supported"),
+        "add.complex": _skip("complex_not_supported"),
+        "add.int_complex": _skip("complex_not_supported"),
+        "add.complex_int": _skip("complex_not_supported"),
+        "add.float_complex": _skip("complex_not_supported"),
+        "add.complex_float": _skip("complex_not_supported"),
+        "asin.complex": _skip("complex_not_supported"),
+        "asinh.complex": _skip("complex_not_supported"),
+        "atan.complex": _skip("complex_not_supported"),
+        "atanh.complex": _skip("complex_not_supported"),
     }
 )
 

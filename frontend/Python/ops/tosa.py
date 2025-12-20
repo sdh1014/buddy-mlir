@@ -475,7 +475,7 @@ def addmm_op(
 
         # Add input_ with broadcasting
         op = _gen_arith_binary_op(input_, matmul_op.result, tosa.AddOp)
-        return op
+        return op.result
 
 
 def bmm_op(node: BatchMatmulOp, symbol_table) -> ir.Operation:

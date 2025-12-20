@@ -532,32 +532,6 @@ def _template_lstm_input():
     return [x, [h0, c0], params, True, 1, 0.0, False, False, False], {}
 
 
-def _template_lstm_data():
-    torch.manual_seed(0)
-    padded = torch.randn(2, 1, 1)
-    lengths = torch.tensor([2])
-    pack = torch.nn.utils.rnn.pack_padded_sequence(
-        padded, lengths, batch_first=False, enforce_sorted=False
-    )
-    mod = torch.nn.LSTM(
-        input_size=1, hidden_size=2, num_layers=1, batch_first=False
-    )
-    params = [p for p in mod.parameters()]
-    h0 = torch.zeros(1, 1, 2)
-    c0 = torch.zeros(1, 1, 2)
-    return [
-        pack.data,
-        pack.batch_sizes,
-        [h0, c0],
-        params,
-        True,
-        1,
-        0.0,
-        False,
-        False,
-    ], {}
-
-
 # Register custom templates or skips.
 CUSTOM_TEMPLATES.update(
     {
@@ -636,7 +610,7 @@ CUSTOM_TEMPLATES.update(
         "log1p.Scalar": lambda: _template_scalar_input(2.0),
         "log_normal_.default": _skip("random_op_not_supported"),
         "lstm.input": _skip("rnn_not_supported"),
-        "lstm.data": _template_lstm_data,
+        "lstm.data": _skip("rnn_not_supported"),
         "lu_unpack.default": _skip("linalg_not_supported"),
         "lu_unpack.out": _skip("linalg_not_supported"),
         "masked_fill.Tensor": _template_masked_fill_tensor,

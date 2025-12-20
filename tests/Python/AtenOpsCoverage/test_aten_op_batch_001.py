@@ -798,6 +798,11 @@ CUSTOM_TEMPLATES.update(
         "copysign.Scalar": _template_copysign_scalar,
         "copysign.Scalar_out": _template_copysign_scalar_out,
         "copysign_.Scalar": _template_copysign_scalar_inplace,
+        # Complex types not supported
+        "cos.complex": _skip("complex_not_supported"),
+        "cosh.complex": _skip("complex_not_supported"),
+        # Sparse tensor attribute query
+        "dense_dim.default": _skip("sparse_not_supported"),
     }
 )
 

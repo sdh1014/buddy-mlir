@@ -818,7 +818,7 @@ CUSTOM_TEMPLATES.update(
         "index_reduce.default": _template_index_reduce,
         "index_reduce.out": _template_index_reduce_out,
         "index_reduce_.default": _template_index_reduce_inplace,
-        "is_coalesced.default": _template_is_coalesced,
+        "is_coalesced.default": _skip("sparse_not_supported"),
         "index.str": _template_index_str,
         "index.list_str": _template_index_list_str,
         "istft.default": _skip("complex_fft_not_supported"),

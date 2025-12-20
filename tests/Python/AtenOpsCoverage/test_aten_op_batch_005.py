@@ -13,18 +13,6 @@ def _skip(reason: str):
     return fn
 
 
-def _template_masked_select():
-    x = torch.tensor([[1.0, 2.0], [3.0, 4.0]], dtype=torch.float32)
-    mask = torch.tensor([[True, False], [False, True]])
-    return [x, mask], {}
-
-
-def _template_masked_select_out():
-    args, _ = _template_masked_select()
-    out = torch.empty(0, dtype=args[0].dtype)
-    return args, {"out": out}
-
-
 def _template_max_dim_max():
     x = torch.tensor([[1.0, 2.0], [3.0, 0.5]], dtype=torch.float32)
     dim = 1
@@ -728,17 +716,13 @@ def _template_nll_loss2d_backward_out():
     return args, {"grad_input": grad_input}
 
 
-def _template_nonzero_out():
-    x = torch.tensor([0.0, 1.0, 0.0], dtype=torch.float32)
-    out = torch.empty((0, x.dim()), dtype=torch.int64)
-    return [x], {"out": out}
-
-
 # Register custom templates or skips.
 CUSTOM_TEMPLATES.update(
     {
-        "masked_select.default": _template_masked_select,
-        "masked_select.out": _template_masked_select_out,
+        # Dynamic shape ops: output shape depends on input values, not just shapes.
+        # TorchDynamo cannot compile these statically.
+        "masked_select.default": _skip("dynamic_shape_op"),
+        "masked_select.out": _skip("dynamic_shape_op"),
         "max.dim_max": _template_max_dim_max,
         "max.names_dim": _skip("named_tensor_torchscript"),
         "max.names_dim_max": _skip("named_tensor_torchscript"),
@@ -853,7 +837,10 @@ CUSTOM_TEMPLATES.update(
         "nll_loss2d_forward.output": _template_nll_loss2d_forward_out,
         "nll_loss2d_backward.default": _template_nll_loss2d_backward,
         "nll_loss2d_backward.grad_input": _template_nll_loss2d_backward_out,
-        "nonzero.out": _template_nonzero_out,
+        # Dynamic shape ops: output shape depends on input values
+        "nonzero.default": _skip("dynamic_shape_op"),
+        "nonzero.out": _skip("dynamic_shape_op"),
+        "nonzero_numpy.default": _skip("dynamic_shape_op"),
         "miopen_batch_norm.default": _skip("backend_specific_miopen"),
         "miopen_batch_norm.out": _skip("backend_specific_miopen"),
         "miopen_batch_norm_backward.default": _skip("backend_specific_miopen"),

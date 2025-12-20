@@ -489,25 +489,51 @@ def _import_graphs(
     schema: torch._C.FunctionSchema,
     compiler: DynamoCompiler,
 ) -> Tuple[List[Any], Kwargs, str]:
+    # For .out variants, warmup first to get correct output shapes and avoid
+    # "out variants with resizing on graph inputs" graph breaks from Dynamo.
+    out_arg_names = _out_tensor_arg_names(schema)
+    actual_kwargs = kwargs
+    if out_arg_names:
+        warmed_kwargs = _warmup_out_buffers(func, args, kwargs, out_arg_names)
+        if warmed_kwargs is not None:
+            actual_kwargs = warmed_kwargs
+
     graphs = compiler.importer(
-        func, *clone_inputs(args), **clone_inputs(kwargs)
+        func, *clone_inputs(args), **clone_inputs(actual_kwargs)
     )
     if graphs:
-        return graphs, kwargs, ""
+        return graphs, actual_kwargs, ""
     if not _returns_tensor(schema):
-        return [], kwargs, "scalar_output"
+        return [], actual_kwargs, "scalar_output"
+    return [], actual_kwargs, "import_empty"
 
-    out_arg_names = _out_tensor_arg_names(schema)
-    warmed_kwargs = _warmup_out_buffers(func, args, kwargs, out_arg_names)
-    if warmed_kwargs is None:
-        return [], kwargs, "import_empty"
 
-    graphs = compiler.importer(
-        func, *clone_inputs(args), **clone_inputs(warmed_kwargs)
+def _reset_graph_break_reasons() -> List[Any] | None:
+    reasons = getattr(torch._dynamo, "graph_break_reasons", None)
+    if isinstance(reasons, list):
+        reasons.clear()
+        return reasons
+    return None
+
+
+def _is_scalar_output_break(reasons: List[Any] | None) -> bool:
+    """Check if graph breaks are due to non-Tensor output (scalar ops).
+
+    Only matches 'torch.* op returned non-Tensor' which is for true scalar output ops.
+    Does NOT match 'Data dependent operator ... non-Tensor output' which is different.
+    """
+    if not reasons:
+        return False
+    return any(
+        "op returned non-Tensor" in str(getattr(r, "reason", r))
+        for r in reasons
     )
-    if not graphs:
-        return [], kwargs, "import_empty"
-    return graphs, warmed_kwargs, ""
+
+
+def _graph_break_count(reasons: List[Any] | None) -> int:
+    if not reasons:
+        return 0
+    return len(reasons)
 
 
 def _classify_import_exception(tb: str) -> str | None:
@@ -563,6 +589,7 @@ def run_aten_op(
     args, kwargs = inputs
 
     torch.manual_seed(0)
+    graph_break_reasons = _reset_graph_break_reasons()
 
     def op_call(*inputs, **kw):
         return op(*inputs, **kw)
@@ -571,6 +598,16 @@ def run_aten_op(
         graphs, kwargs, skip_reason = _import_graphs(
             op_call, args, kwargs, schema, dynamo_compiler
         )
+        graph_breaks = _graph_break_count(graph_break_reasons)
+        # Scalar output ops cause graph breaks but should be skipped, not failed.
+        # Check both: 1) graph break reason mentions non-Tensor, OR 2) schema shows
+        # non-Tensor return (handles data-dependent ops like item.default).
+        if graph_breaks:
+            if _is_scalar_output_break(
+                graph_break_reasons
+            ) or not _returns_tensor(schema):
+                return Result.skip(name, "scalar_output")
+            return Result.fail(name, f"graph_break:count={graph_breaks}")
         if skip_reason:
             return Result.skip(name, skip_reason)
         if len(graphs) != 1:
@@ -586,6 +623,9 @@ def run_aten_op(
         skip_reason = _classify_import_exception(tb)
         if skip_reason:
             return Result.skip(name, skip_reason)
+        graph_breaks = _graph_break_count(graph_break_reasons)
+        if graph_breaks:
+            return Result.fail(name, f"graph_break:count={graph_breaks}")
         return Result.fail(name, f"convert:{type(e).__name__}:{e}")
 
     return Result.passed(name)
